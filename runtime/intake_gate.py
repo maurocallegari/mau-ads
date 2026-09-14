@@ -12,6 +12,7 @@ from onboarding.bootstrap_project import bootstrap
 from onboarding.validate_project import ContractError, validate
 from runtime.analyze_repository import analyze
 from runtime.routing import route
+from runtime.spec_kit import status as spec_kit_status
 
 
 def _run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -101,6 +102,36 @@ def _prepare_worktree(root: Path, issue: dict, request: str) -> dict:
     return {"status": "READY", "branch": branch, "path": str(path), "source": "created"}
 
 
+def _execution_contract(routing: dict, work: dict) -> dict:
+    workflow = routing["workflow"]
+    verification = routing["verification"]
+    workspace = work.get("path") if work.get("status") == "READY" else None
+    requires_spec_kit = workflow["engine"] == "spec-kit"
+    kit = None
+    if requires_spec_kit and workspace:
+        kit = spec_kit_status(workspace)
+
+    return {
+        "engine": workflow["engine"],
+        "workflow_profile": workflow["profile"],
+        "required_sequence": workflow["sequence"],
+        "verification_profile": verification["profile"],
+        "verification_minimum": verification["minimum"],
+        "model_policy": routing["model_policy"],
+        "spec_kit_required": requires_spec_kit,
+        "spec_kit": kit,
+        "spec_kit_init": (
+            "python3 runtime/spec_kit.py init <workspace> --integration codex"
+            if requires_spec_kit and kit and kit.get("status") == "NEEDS_INIT"
+            else None
+        ),
+        "completion_gate": (
+            "python3 runtime/completion_gate.py <workspace> "
+            f"--workflow-profile {workflow['profile']} --verification-profile {verification['profile']}"
+        ),
+    }
+
+
 def intake(
     repository: str | Path,
     request: str,
@@ -124,6 +155,7 @@ def intake(
             contract = validate(root, False)
 
     analysis = analyze(root)
+    routing = route(request)
 
     if mode == "standalone":
         issue = {"status": "READY", "source": "provided", "number": issue_number} if issue_number else _resolve_or_create_issue(root, request, analysis["repository"]["git"]["origin"])
@@ -136,8 +168,10 @@ def intake(
         write_authorized = contract.get("contract") == "PASS" and bool(issue_number) and bool(workspace)
         delegated = ["work_item", "workspace_isolation", "worker_dispatch", "github_delivery"]
 
+    execution = _execution_contract(routing, work)
+
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "mau.work_context",
         "mode": mode,
         "request": request,
@@ -149,11 +183,14 @@ def intake(
         "onboarding": onboarding_result,
         "work_item": issue,
         "workspace": work,
-        "routing": route(request),
+        "routing": routing,
+        "execution": execution,
         "delegated_to_orchestrator": delegated,
         "write_authorized": write_authorized,
         "completion_requires": {
+            "workflow_artifacts": execution["spec_kit_required"],
             "project_verification": True,
+            "verification_profile": execution["verification_profile"],
             "final_diff_review": True,
             "truthful_verification_state": True,
             "production_authorization_separate": True,
