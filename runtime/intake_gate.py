@@ -13,6 +13,7 @@ from onboarding.validate_project import ContractError, validate
 from runtime.analyze_repository import analyze
 from runtime.routing import route
 from runtime.spec_kit import status as spec_kit_status
+from runtime.spec_kit_gate import clarification_state
 
 
 def _run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -108,6 +109,10 @@ def _execution_contract(routing: dict, work: dict) -> dict:
     workspace = work.get("path") if work.get("status") == "READY" else None
     requires_spec_kit = workflow["engine"] == "spec-kit"
     kit = spec_kit_status(workspace) if requires_spec_kit and workspace else None
+    clarification = None
+
+    if requires_spec_kit and workspace and kit and kit.get("status") == "READY":
+        clarification = clarification_state(workspace)
 
     actions: list[dict] = []
     if requires_spec_kit and kit and kit.get("status") == "NEEDS_INIT":
@@ -138,26 +143,88 @@ def _execution_contract(routing: dict, work: dict) -> dict:
             ]
         )
 
-    execution_ready = not requires_spec_kit or bool(kit and kit.get("status") == "READY")
-    actions.append(
-        {
-            "type": "complete_work",
-            "workspace": workspace,
-            "workflow_profile": workflow["profile"],
-            "verification_profile": verification["profile"],
-        }
-    )
+    if requires_spec_kit and kit and kit.get("status") == "READY":
+        clarity_status = clarification.get("status") if clarification else "NOT_ASSESSED"
+        if clarity_status == "NOT_ASSESSED":
+            actions.append(
+                {
+                    "type": "assess_requirements",
+                    "workspace": workspace,
+                    "sequence": ["speckit.specify", "speckit.clarify", "write_clarification_artifact", "rerun_intake"],
+                    "artifact": "<active-feature>/clarification.json",
+                    "rule": "repository facts first; ask the user only for unresolved functional, risk or irreversible decisions",
+                }
+            )
+        elif clarity_status == "NEEDS_USER":
+            actions.extend(
+                [
+                    {
+                        "type": "ask_user",
+                        "questions": clarification.get("open_questions", []),
+                        "reason": clarification.get("reason"),
+                    },
+                    {
+                        "type": "record_clarification_answers",
+                        "artifact": clarification.get("artifact"),
+                        "after": "ask_user",
+                    },
+                    {"type": "rerun_intake", "after": "record_clarification_answers"},
+                ]
+            )
+        elif clarity_status == "BLOCKED":
+            actions.extend(
+                [
+                    {
+                        "type": "repair_clarification_artifact",
+                        "artifact": clarification.get("artifact"),
+                        "reason": clarification.get("reason"),
+                    },
+                    {"type": "rerun_intake", "after": "repair_clarification_artifact"},
+                ]
+            )
+
+    if not requires_spec_kit or (
+        kit and kit.get("status") == "READY" and clarification and clarification.get("status") == "PASS"
+    ):
+        actions.append(
+            {
+                "type": "complete_work",
+                "workspace": workspace,
+                "workflow_profile": workflow["profile"],
+                "verification_profile": verification["profile"],
+            }
+        )
+
+    if not requires_spec_kit:
+        execution_status = "READY"
+    elif not kit or kit.get("status") != "READY":
+        execution_status = "NEEDS_RECONCILE"
+    elif not clarification or clarification.get("status") == "NOT_ASSESSED":
+        execution_status = "NEEDS_CLARIFICATION_ASSESSMENT"
+    elif clarification.get("status") == "NEEDS_USER":
+        execution_status = "NEEDS_CLARIFICATION"
+    elif clarification.get("status") == "PASS":
+        execution_status = "READY"
+    else:
+        execution_status = "NEEDS_RECONCILE"
 
     return {
-        "status": "READY" if execution_ready else "NEEDS_RECONCILE",
+        "status": execution_status,
         "engine": workflow["engine"],
         "workflow_profile": workflow["profile"],
         "required_sequence": workflow["sequence"],
+        "pre_implementation_sequence": (
+            ["speckit.specify", "speckit.clarify", "mau.clarification-gate"]
+            if requires_spec_kit
+            else ["inspect"]
+        ),
         "verification_profile": verification["profile"],
         "verification_minimum": verification["minimum"],
         "model_policy": routing["model_policy"],
         "spec_kit_required": requires_spec_kit,
         "spec_kit": kit,
+        "clarification_required": requires_spec_kit,
+        "clarification": clarification,
         "actions": actions,
     }
 
@@ -200,9 +267,12 @@ def intake(
 
     execution = _execution_contract(routing, work)
     implementation_authorized = write_authorized and execution["status"] == "READY"
+    reconciliation_scope: list[str] = []
+    if write_authorized and not implementation_authorized:
+        reconciliation_scope = ["spec-kit-setup", "spec-kit-artifacts", "clarification-artifact"]
 
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": "mau.work_context",
         "mode": mode,
         "request": request,
@@ -219,9 +289,12 @@ def intake(
         "delegated_to_orchestrator": delegated,
         "write_authorized": write_authorized,
         "implementation_authorized": implementation_authorized,
+        "user_input_required": execution["status"] == "NEEDS_CLARIFICATION",
         "gate_reconciliation_authorized": write_authorized and not implementation_authorized,
+        "gate_reconciliation_scope": reconciliation_scope,
         "completion_requires": {
             "workflow_artifacts": execution["spec_kit_required"],
+            "clarification_gate": execution["clarification_required"],
             "project_verification": True,
             "verification_profile": execution["verification_profile"],
             "final_diff_review": True,
