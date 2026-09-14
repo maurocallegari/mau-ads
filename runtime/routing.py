@@ -7,11 +7,36 @@ TRIVIAL_SIGNALS = (
     "typo",
     "refuso",
     "copy text",
-    "testo",
-    "rename",
-    "rinomina",
+    "testo del pulsante",
+    "testo etichetta",
+    "rename label",
+    "rinomina etichetta",
     "placeholder",
     "tooltip",
+)
+
+TRIVIAL_DISQUALIFIERS = (
+    "add ",
+    "aggiung",
+    "implement",
+    "create ",
+    "crea ",
+    "new ",
+    "nuov",
+    "module",
+    "modulo",
+    "section",
+    "sezione",
+    "workflow",
+    "integration",
+    "integrazione",
+    "database",
+    "schema",
+    "migration",
+    "auth",
+    "permission",
+    "permesso",
+    "api",
 )
 
 COMPLEX_SIGNALS = (
@@ -87,10 +112,14 @@ def _complexity(text: str, risk: str) -> tuple[str, list[str]]:
         reasons.append("elevated risk prevents trivial routing")
         return "STANDARD", reasons
 
-    if any(signal in text for signal in TRIVIAL_SIGNALS):
-        reasons.append("request appears local and deterministic")
+    looks_trivial = any(signal in text for signal in TRIVIAL_SIGNALS)
+    has_disqualifier = any(signal in text for signal in TRIVIAL_DISQUALIFIERS)
+    if looks_trivial and not has_disqualifier:
+        reasons.append("request is explicitly local and deterministic")
         return "TRIVIAL", reasons
 
+    # Unknown work deliberately falls upward. The router may over-verify an
+    # ambiguous request, but it must not under-classify it as trivial.
     return "STANDARD", reasons
 
 
