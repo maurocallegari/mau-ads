@@ -77,6 +77,9 @@ def initialize(
         script,
         "--ignore-agent-tools",
     ]
+    if lean:
+        command.extend(("--preset", "lean"))
+
     initialized = _run(command, root)
     if initialized.returncode != 0:
         return {
@@ -90,16 +93,6 @@ def initialize(
             "reason": "specify init failed",
         }
 
-    preset = None
-    if lean:
-        added = _run([executable, "preset", "add", "lean"], root)
-        preset = {
-            "name": "lean",
-            "status": "READY" if added.returncode == 0 else "UNAVAILABLE",
-            "stdout": added.stdout[-2000:],
-            "stderr": added.stderr[-2000:],
-        }
-
     current = status(root)
     return {
         "schema_version": 1,
@@ -108,13 +101,14 @@ def initialize(
         "repository": str(root),
         "integration": integration,
         "script": script,
-        "preset": preset,
+        "preset": "lean" if lean else None,
         "current": current,
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MAU adapter for GitHub Spec Kit")
+    parser.add_argument("--pretty", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
     check = sub.add_parser("status")
@@ -126,7 +120,6 @@ def main() -> int:
     init.add_argument("--script", choices=("sh", "ps", "py"), default="py")
     init.add_argument("--no-lean", action="store_true")
 
-    parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
     if args.command == "status":
