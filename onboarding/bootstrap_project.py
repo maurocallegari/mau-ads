@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
+from onboarding.onboarding_gate import initial_state
 from runtime.analyze_repository import analyze
 
 AGENTS_TEMPLATE = """# AGENTS.md
@@ -15,9 +16,11 @@ Before any durable edit, obtain a valid MAU work context. The user does not need
 
 No valid work context means no durable writes.
 
+If repository onboarding is not `READY`, only onboarding reconciliation is allowed. Inspect repository evidence first; ask the user only for facts that cannot be resolved safely from the repository. Do not edit application code until onboarding and task-level gates authorize implementation.
+
 ## Before editing
 
-- Read `.ai/project.json`, `PROJECT.md` and `REPO_MAP.md` when present.
+- Read `.ai/project.json`, `.ai/onboarding.json`, `PROJECT.md` and `REPO_MAP.md` when present.
 - Inspect relevant source and tests before changing behavior.
 - Preserve repository evidence over remembered session assumptions.
 
@@ -49,7 +52,7 @@ def _project_text(data: dict) -> str:
 
 ## Purpose
 
-Purpose was not safely inferable from deterministic evidence. Workers must inspect repository-owned documentation and relevant code before changing behavior.
+Purpose was not safely inferable from deterministic evidence. Repository onboarding must resolve this from source/docs or ask the user before implementation is authorized.
 
 ## Repository evidence
 
@@ -58,10 +61,14 @@ Purpose was not safely inferable from deterministic evidence. Workers must inspe
 - observed test evidence: {len(evidence['tests'])} path(s)
 - observed migration/schema evidence: {len(evidence['migrations_or_schema'])} path(s)
 
+## Onboarding
+
+Machine-readable onboarding evidence lives in `.ai/onboarding.json`. This document may be enriched from repository evidence once onboarding has converged.
+
 ## Verification
 
 The canonical local verification entry point is declared in `.ai/project.json`.
-A generated `UNAVAILABLE` verifier is not a PASS and must be replaced with real project checks.
+A generated `UNAVAILABLE` verifier is not a PASS and must be replaced with real project checks before onboarding can become `READY`.
 """
 
 
@@ -94,6 +101,10 @@ def bootstrap(repository: str | Path) -> dict:
                 indent=2,
             ) + "\n",
         ),
+        (
+            root / ".ai" / "onboarding.json",
+            json.dumps(initial_state(root), indent=2) + "\n",
+        ),
         (root / "dev" / "verify-local.sh", VERIFY_TEMPLATE),
     ]
 
@@ -107,11 +118,13 @@ def bootstrap(repository: str | Path) -> dict:
         created.append(path.relative_to(root).as_posix())
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "mau.onboarding_bootstrap",
         "repository": str(root),
         "created": created,
         "preserved_existing": True,
+        "onboarding_status": "NEEDS_ASSESSMENT",
+        "implementation_authorized": False,
     }
 
 
