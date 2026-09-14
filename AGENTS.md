@@ -16,7 +16,18 @@ NO VALID MAU WORK CONTEXT -> NO DURABLE WRITES
 
 The returned execution contract is authoritative for the current work item. It defines the minimum workflow profile and minimum verification profile. A worker may strengthen them when repository evidence requires it, but must not silently downgrade them.
 
-`write_authorized=true` permits only the writes represented by the current gate state. When `implementation_authorized=false`, execute only the explicit gate-reconciliation actions (for example installing/initializing Spec Kit), rerun intake, and do not edit application code until implementation becomes authorized.
+`write_authorized=true` permits only the writes represented by the current gate state. When `implementation_authorized=false`, execute only the explicit gate-reconciliation actions, rerun intake, and do not edit application code until implementation becomes authorized.
+
+For Spec Kit-routed work, implementation is additionally blocked until the clarification gate passes. The worker must run specification/clarification, record `clarification.json` for the active feature, and resolve every substantive unknown before implementation.
+
+Clarification policy:
+
+- resolve implementation facts from repository evidence first;
+- sourced, non-substantive technical assumptions are allowed;
+- do not invent functional behavior, risk acceptance or irreversible/destructive semantics;
+- unresolved functional, risk or irreversible decisions must become explicit user questions;
+- while any such question is open, return `NEEDS_CLARIFICATION`, set `user_input_required=true`, and keep `implementation_authorized=false`;
+- after answers are recorded, rerun intake before application-code changes.
 
 ## Authority
 
@@ -25,6 +36,7 @@ The returned execution contract is authoritative for the current work item. It d
 - Project-local `AGENTS.md`, `.ai/project.json`, `PROJECT.md` and repository code override generic assumptions when they are more specific and do not violate safety constraints.
 - Transient repository analysis is evidence, not a second durable knowledge database.
 - Spec Kit artifacts structure non-trivial work; they do not replace the GitHub Issue, repository contract or executable verification as sources of truth.
+- User answers recorded by the clarification contract are authoritative for unresolved product/risk decisions in that work item.
 
 ## Before editing
 
@@ -32,9 +44,10 @@ The returned execution contract is authoritative for the current work item. It d
 - Read the target repository contract and inspect the relevant code path.
 - Reuse existing patterns before inventing new abstractions.
 - Resolve implementation facts from repository evidence before asking a human.
+- Never infer a missing functional/risk/irreversible decision merely to avoid asking a question.
 - Use one canonical GitHub Issue for one independently deliverable outcome.
 - Do not create duplicate Issues for internal worker or Spec Kit subtasks.
-- Follow the workflow sequence returned by intake. When `engine=spec-kit`, reconcile its setup first, rerun intake, and produce the required artifacts before implementation/completion.
+- Follow the workflow sequence returned by intake. When `engine=spec-kit`, reconcile setup, run `specify -> clarify -> mau.clarification-gate`, and rerun intake before implementation.
 
 ## Repository analysis
 
@@ -65,7 +78,7 @@ The returned execution contract is authoritative for the current work item. It d
 - Inspect the final diff for unintended behavior, generated files, secrets, formatting regressions and unrelated edits.
 - Never claim execution or verification that did not occur.
 - Valid states are `PASS`, `FAIL`, `UNAVAILABLE`, `NOT_RUN`, and `NOT_APPLICABLE`.
-- For Spec Kit-routed work, the MAU Spec Kit artifact gate must pass before completion. Unchecked implementation tasks block completion; critical work also requires completed checklist evidence.
+- For Spec Kit-routed work, the MAU Spec Kit artifact gate must pass before completion. A missing/unresolved clarification contract blocks completion; unchecked implementation tasks also block completion; critical work additionally requires completed checklist evidence.
 
 ## Safety
 
@@ -78,8 +91,11 @@ The returned execution contract is authoritative for the current work item. It d
 
 ```text
 request -> intake -> analysis/onboarding -> Issue -> isolated workspace
-        -> gate reconciliation if required -> implementation authorized
-        -> routed workflow -> proportional verification -> completion gate
+        -> Spec Kit setup if required
+        -> specify/clarify -> clarification gate
+             -> repository resolves facts OR user answers substantive unknowns
+        -> rerun intake -> implementation authorized
+        -> routed implementation -> proportional verification -> completion gate
         -> PR -> review/merge -> READY_TO_DEPLOY
 ```
 
@@ -94,7 +110,7 @@ Promote only stable information that materially reduces future rediscovery:
 - `AGENTS.md`: operating invariants;
 - `.ai/project.json`: machine-readable project and verification metadata.
 
-Do not record transient task state as permanent repository knowledge.
+Do not record transient task state as permanent repository knowledge. `clarification.json` is work-item evidence inside the active Spec Kit feature, not global project knowledge.
 
 ## Orchestrators
 
