@@ -98,6 +98,25 @@ def _risk(text: str) -> tuple[str, list[str]]:
     return risk, reasons
 
 
+def _trivial_request_is_self_contained(text: str) -> bool:
+    """Keep the direct path only for explicit, deterministic replacements."""
+    if "->" in text or "→" in text:
+        return True
+
+    replacement_pairs = (
+        (" da ", " a "),
+        (" from ", " to "),
+    )
+    for start, end in replacement_pairs:
+        start_at = text.find(start)
+        if start_at < 0:
+            continue
+        end_at = text.find(end, start_at + len(start))
+        if end_at > start_at + len(start) and text[end_at + len(end):].strip():
+            return True
+    return False
+
+
 def _complexity(text: str, risk: str) -> tuple[str, list[str]]:
     reasons: list[str] = []
 
@@ -114,12 +133,15 @@ def _complexity(text: str, risk: str) -> tuple[str, list[str]]:
 
     looks_trivial = any(signal in text for signal in TRIVIAL_SIGNALS)
     has_disqualifier = any(signal in text for signal in TRIVIAL_DISQUALIFIERS)
-    if looks_trivial and not has_disqualifier:
-        reasons.append("request is explicitly local and deterministic")
+    if looks_trivial and not has_disqualifier and _trivial_request_is_self_contained(text):
+        reasons.append("request is explicitly local, self-contained and deterministic")
         return "TRIVIAL", reasons
 
-    # Unknown work deliberately falls upward. The router may over-verify an
-    # ambiguous request, but it must not under-classify it as trivial.
+    if looks_trivial and not has_disqualifier:
+        reasons.append("apparently small request is not self-contained; clarification path required")
+
+    # Unknown or under-specified work deliberately falls upward. The router may
+    # over-verify an ambiguous request, but it must not under-classify it as trivial.
     return "STANDARD", reasons
 
 
@@ -131,6 +153,7 @@ def _workflow(risk: str, complexity: str) -> dict:
             "sequence": [
                 "speckit.specify",
                 "speckit.clarify",
+                "mau.clarification-gate",
                 "speckit.plan",
                 "speckit.checklist",
                 "speckit.tasks",
@@ -147,6 +170,7 @@ def _workflow(risk: str, complexity: str) -> dict:
             "sequence": [
                 "speckit.specify",
                 "speckit.clarify",
+                "mau.clarification-gate",
                 "speckit.plan",
                 "speckit.tasks",
                 "speckit.analyze",
@@ -161,6 +185,8 @@ def _workflow(risk: str, complexity: str) -> dict:
             "profile": "standard",
             "sequence": [
                 "speckit.specify",
+                "speckit.clarify",
+                "mau.clarification-gate",
                 "speckit.plan",
                 "speckit.tasks",
                 "speckit.implement",
