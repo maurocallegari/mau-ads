@@ -121,13 +121,24 @@ def _execution_contract(routing: dict, work: dict) -> dict:
             }
         )
     if requires_spec_kit and kit and kit.get("status") == "UNAVAILABLE":
-        actions.append(
-            {
-                "type": "install_spec_kit_cli",
-                "reason": kit.get("reason"),
-            }
+        actions.extend(
+            [
+                {
+                    "type": "install_spec_kit_cli",
+                    "reason": kit.get("reason"),
+                },
+                {
+                    "type": "initialize_spec_kit",
+                    "workspace": workspace,
+                    "integration": "codex",
+                    "script": "py",
+                    "preset": "lean",
+                    "after": "install_spec_kit_cli",
+                },
+            ]
         )
 
+    execution_ready = not requires_spec_kit or bool(kit and kit.get("status") == "READY")
     actions.append(
         {
             "type": "complete_work",
@@ -138,6 +149,7 @@ def _execution_contract(routing: dict, work: dict) -> dict:
     )
 
     return {
+        "status": "READY" if execution_ready else "NEEDS_RECONCILE",
         "engine": workflow["engine"],
         "workflow_profile": workflow["profile"],
         "required_sequence": workflow["sequence"],
@@ -187,6 +199,7 @@ def intake(
         delegated = ["work_item", "workspace_isolation", "worker_dispatch", "github_delivery"]
 
     execution = _execution_contract(routing, work)
+    implementation_authorized = write_authorized and execution["status"] == "READY"
 
     return {
         "schema_version": 2,
@@ -205,6 +218,8 @@ def intake(
         "execution": execution,
         "delegated_to_orchestrator": delegated,
         "write_authorized": write_authorized,
+        "implementation_authorized": implementation_authorized,
+        "gate_reconciliation_authorized": write_authorized and not implementation_authorized,
         "completion_requires": {
             "workflow_artifacts": execution["spec_kit_required"],
             "project_verification": True,
