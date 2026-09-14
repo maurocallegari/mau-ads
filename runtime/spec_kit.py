@@ -26,15 +26,18 @@ def status(repository: str | Path) -> dict:
         except json.JSONDecodeError:
             integration = None
 
-    if not executable:
-        state = "UNAVAILABLE"
-        reason = "Spec Kit CLI is not installed"
-    elif not initialized:
-        state = "NEEDS_INIT"
-        reason = "repository is not initialized for Spec Kit"
-    else:
+    # Once a project is initialized, execution is driven by repository-local
+    # Spec Kit artifacts/skills. The CLI is required to initialize or upgrade,
+    # not to prove that an already initialized project is usable.
+    if initialized:
         state = "READY"
         reason = None
+    elif not executable:
+        state = "UNAVAILABLE"
+        reason = "Spec Kit CLI is not installed"
+    else:
+        state = "NEEDS_INIT"
+        reason = "repository is not initialized for Spec Kit"
 
     return {
         "schema_version": 1,
@@ -42,6 +45,7 @@ def status(repository: str | Path) -> dict:
         "status": state,
         "repository": str(root),
         "cli": executable,
+        "cli_available": bool(executable),
         "initialized": initialized,
         "integration": integration,
         "reason": reason,
