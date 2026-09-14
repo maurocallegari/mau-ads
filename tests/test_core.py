@@ -11,6 +11,7 @@ from onboarding.validate_project import ContractError, validate
 from runtime.analyze_repository import analyze
 from runtime.intake_gate import intake
 from runtime.routing import route
+from runtime.spec_kit_gate import verify as verify_spec_kit
 
 
 class CoreTests(unittest.TestCase):
@@ -23,6 +24,20 @@ class CoreTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
         subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
         return root
+
+    def make_spec_feature(self, repo: Path, tasks: str = "- [x] T001 Done\n") -> Path:
+        feature = repo / "specs" / "001-example"
+        feature.mkdir(parents=True)
+        (feature / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (feature / "plan.md").write_text("# Plan\n", encoding="utf-8")
+        (feature / "tasks.md").write_text(tasks, encoding="utf-8")
+        specify = repo / ".specify"
+        specify.mkdir()
+        (specify / "feature.json").write_text(
+            json.dumps({"feature_directory": "specs/001-example"}),
+            encoding="utf-8",
+        )
+        return feature
 
     def test_analyzer_is_read_only(self):
         repo = self.make_repo()
@@ -54,6 +69,24 @@ class CoreTests(unittest.TestCase):
         contract = validate(repo, run_verification=True)
         self.assertEqual(contract["verification"], "NOT_APPLICABLE")
 
+    def test_verification_profile_is_passed_to_project_check(self):
+        repo = self.make_repo()
+        bootstrap(repo)
+        custom = repo / "checks" / "verify.sh"
+        custom.parent.mkdir(parents=True, exist_ok=True)
+        custom.write_text(
+            "#!/usr/bin/env bash\n"
+            "test \"${MAU_VERIFICATION_PROFILE:-}\" = \"minimal\"\n",
+            encoding="utf-8",
+        )
+        manifest_path = repo / ".ai" / "project.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["verification"]["command"] = "checks/verify.sh"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        contract = validate(repo, run_verification=True, verification_profile="minimal")
+        self.assertEqual(contract["verification"], "PASS")
+        self.assertEqual(contract["verification_profile"], "minimal")
+
     def test_external_orchestrator_requires_evidence(self):
         repo = self.make_repo()
         payload = intake(
@@ -66,6 +99,8 @@ class CoreTests(unittest.TestCase):
         )
         self.assertTrue(payload["write_authorized"])
         self.assertIn("work_item", payload["delegated_to_orchestrator"])
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["execution"]["workflow_profile"], "standard")
 
     def test_bad_schema_is_rejected(self):
         repo = self.make_repo()
@@ -80,7 +115,50 @@ class CoreTests(unittest.TestCase):
     def test_routing_marks_sensitive_work(self):
         routed = route("Update database schema and migration")
         self.assertEqual(routed["risk"]["level"], "ELEVATED")
+        self.assertEqual(routed["complexity"]["level"], "COMPLEX")
+        self.assertEqual(routed["workflow"]["profile"], "full")
+        self.assertEqual(routed["verification"]["profile"], "full")
         self.assertIn("persistent-data-safety", routed["capabilities"])
+
+    def test_trivial_label_change_uses_minimum_workflow(self):
+        routed = route("Cambia l'etichetta del pulsante da Salva a Conferma")
+        self.assertEqual(routed["risk"]["level"], "NORMAL")
+        self.assertEqual(routed["complexity"]["level"], "TRIVIAL")
+        self.assertEqual(routed["workflow"]["engine"], "direct")
+        self.assertEqual(routed["workflow"]["profile"], "trivial")
+        self.assertEqual(routed["verification"]["profile"], "minimal")
+        self.assertEqual(routed["model_policy"]["implementation"], "economy")
+
+    def test_new_section_uses_full_spec_kit_workflow(self):
+        routed = route("Aggiungi una nuova sezione del gestionale per lo storico controlli")
+        self.assertEqual(routed["complexity"]["level"], "COMPLEX")
+        self.assertEqual(routed["workflow"]["engine"], "spec-kit")
+        self.assertEqual(routed["workflow"]["profile"], "full")
+        self.assertIn("speckit.plan", routed["workflow"]["sequence"])
+        self.assertEqual(routed["verification"]["profile"], "full")
+
+    def test_spec_kit_gate_blocks_incomplete_tasks(self):
+        repo = self.make_repo()
+        self.make_spec_feature(repo, tasks="- [ ] T001 Implement\n")
+        result = verify_spec_kit(repo, "standard")
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertIn("T001", result["open_tasks"][0])
+
+    def test_spec_kit_gate_passes_complete_feature(self):
+        repo = self.make_repo()
+        self.make_spec_feature(repo)
+        result = verify_spec_kit(repo, "full")
+        self.assertEqual(result["status"], "PASS")
+
+    def test_critical_spec_kit_gate_requires_complete_checklists(self):
+        repo = self.make_repo()
+        feature = self.make_spec_feature(repo)
+        checklists = feature / "checklists"
+        checklists.mkdir()
+        (checklists / "safety.md").write_text("- [ ] Verify rollback\n", encoding="utf-8")
+        result = verify_spec_kit(repo, "critical")
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertIn("Verify rollback", result["open_checklist_items"][0])
 
 
 if __name__ == "__main__":
