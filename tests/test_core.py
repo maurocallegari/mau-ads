@@ -13,7 +13,7 @@ from runtime.analyze_repository import analyze
 from runtime.intake_gate import intake
 from runtime.routing import route
 from runtime.spec_kit import status as spec_kit_status
-from runtime.spec_kit_gate import verify as verify_spec_kit
+from runtime.spec_kit_gate import clarification_state, verify as verify_spec_kit
 
 
 class CoreTests(unittest.TestCase):
@@ -27,12 +27,29 @@ class CoreTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
         return root
 
-    def make_spec_feature(self, repo: Path, tasks: str = "- [x] T001 Done\n") -> Path:
+    def make_spec_feature(
+        self,
+        repo: Path,
+        tasks: str = "- [x] T001 Done\n",
+        clarification: dict | None = None,
+        write_clarification: bool = True,
+    ) -> Path:
         feature = repo / "specs" / "001-example"
         feature.mkdir(parents=True)
         (feature / "spec.md").write_text("# Spec\n", encoding="utf-8")
         (feature / "plan.md").write_text("# Plan\n", encoding="utf-8")
         (feature / "tasks.md").write_text(tasks, encoding="utf-8")
+        if write_clarification:
+            clarification_payload = clarification or {
+                "schema_version": 1,
+                "status": "CLEAR",
+                "questions": [],
+                "assumptions": [],
+            }
+            (feature / "clarification.json").write_text(
+                json.dumps(clarification_payload),
+                encoding="utf-8",
+            )
         specify = repo / ".specify"
         specify.mkdir()
         (specify / "feature.json").write_text(
@@ -94,6 +111,9 @@ class CoreTests(unittest.TestCase):
         with patch(
             "runtime.intake_gate.spec_kit_status",
             return_value={"status": "READY", "initialized": True, "integration": "codex"},
+        ), patch(
+            "runtime.intake_gate.clarification_state",
+            return_value={"status": "PASS", "open_questions": []},
         ):
             payload = intake(
                 repo,
@@ -106,8 +126,61 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(payload["write_authorized"])
         self.assertTrue(payload["implementation_authorized"])
         self.assertIn("work_item", payload["delegated_to_orchestrator"])
-        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["schema_version"], 3)
         self.assertEqual(payload["execution"]["workflow_profile"], "standard")
+
+    def test_nontrivial_intake_requires_clarification_assessment(self):
+        repo = self.make_repo()
+        with patch(
+            "runtime.intake_gate.spec_kit_status",
+            return_value={"status": "READY", "initialized": True, "integration": "codex"},
+        ), patch(
+            "runtime.intake_gate.clarification_state",
+            return_value={"status": "NOT_ASSESSED", "reason": "missing clarification.json"},
+        ):
+            payload = intake(
+                repo,
+                request="Change one thing",
+                mode="external-orchestrator",
+                issue_number=7,
+                workspace="/tmp/mau-test-workspace",
+                prepare_workspace=False,
+            )
+        self.assertTrue(payload["write_authorized"])
+        self.assertFalse(payload["implementation_authorized"])
+        self.assertFalse(payload["user_input_required"])
+        self.assertEqual(payload["execution"]["status"], "NEEDS_CLARIFICATION_ASSESSMENT")
+        self.assertEqual(payload["execution"]["actions"][0]["type"], "assess_requirements")
+
+    def test_open_clarification_questions_require_user_input(self):
+        repo = self.make_repo()
+        question = {
+            "id": "Q1",
+            "question": "La cancellazione deve essere definitiva o logica?",
+            "category": "irreversible",
+            "answer": None,
+            "source": None,
+        }
+        with patch(
+            "runtime.intake_gate.spec_kit_status",
+            return_value={"status": "READY", "initialized": True, "integration": "codex"},
+        ), patch(
+            "runtime.intake_gate.clarification_state",
+            return_value={"status": "NEEDS_USER", "open_questions": [question], "reason": "user decisions are required"},
+        ):
+            payload = intake(
+                repo,
+                request="Permetti al cliente di cancellare un referto",
+                mode="external-orchestrator",
+                issue_number=7,
+                workspace="/tmp/mau-test-workspace",
+                prepare_workspace=False,
+            )
+        self.assertFalse(payload["implementation_authorized"])
+        self.assertTrue(payload["user_input_required"])
+        self.assertEqual(payload["execution"]["status"], "NEEDS_CLARIFICATION")
+        self.assertEqual(payload["execution"]["actions"][0]["type"], "ask_user")
+        self.assertEqual(payload["execution"]["actions"][0]["questions"][0]["id"], "Q1")
 
     def test_spec_kit_setup_blocks_implementation_but_allows_reconciliation(self):
         repo = self.make_repo()
@@ -170,6 +243,13 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(routed["verification"]["profile"], "minimal")
         self.assertEqual(routed["model_policy"]["implementation"], "economy")
 
+    def test_ambiguous_small_change_is_not_routed_as_trivial(self):
+        routed = route("Cambia l'etichetta del pulsante")
+        self.assertEqual(routed["complexity"]["level"], "STANDARD")
+        self.assertEqual(routed["workflow"]["engine"], "spec-kit")
+        self.assertIn("speckit.clarify", routed["workflow"]["sequence"])
+        self.assertIn("mau.clarification-gate", routed["workflow"]["sequence"])
+
     def test_trivial_keyword_does_not_downgrade_structural_work(self):
         routed = route("Aggiungi un nuovo editor per il testo")
         self.assertNotEqual(routed["complexity"]["level"], "TRIVIAL")
@@ -181,7 +261,59 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(routed["workflow"]["engine"], "spec-kit")
         self.assertEqual(routed["workflow"]["profile"], "full")
         self.assertIn("speckit.plan", routed["workflow"]["sequence"])
+        self.assertIn("mau.clarification-gate", routed["workflow"]["sequence"])
         self.assertEqual(routed["verification"]["profile"], "full")
+
+    def test_spec_kit_gate_blocks_missing_clarification_assessment(self):
+        repo = self.make_repo()
+        self.make_spec_feature(repo, write_clarification=False)
+        result = verify_spec_kit(repo, "standard")
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["clarification"]["status"], "NOT_ASSESSED")
+
+    def test_clarification_gate_surfaces_unresolved_user_question(self):
+        repo = self.make_repo()
+        self.make_spec_feature(
+            repo,
+            clarification={
+                "schema_version": 1,
+                "status": "NEEDS_USER",
+                "questions": [
+                    {
+                        "id": "Q1",
+                        "question": "La cancellazione deve essere definitiva o logica?",
+                        "category": "irreversible",
+                        "answer": None,
+                        "source": None,
+                    }
+                ],
+                "assumptions": [],
+            },
+        )
+        result = clarification_state(repo)
+        self.assertEqual(result["status"], "NEEDS_USER")
+        self.assertEqual(result["open_questions"][0]["id"], "Q1")
+
+    def test_clarification_gate_rejects_functional_assumptions(self):
+        repo = self.make_repo()
+        self.make_spec_feature(
+            repo,
+            clarification={
+                "schema_version": 1,
+                "status": "CLEAR",
+                "questions": [],
+                "assumptions": [
+                    {
+                        "category": "functional",
+                        "text": "Only completed records are visible",
+                        "source": "guess",
+                    }
+                ],
+            },
+        )
+        result = clarification_state(repo)
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertIn("only sourced technical assumptions", result["reason"])
 
     def test_spec_kit_gate_blocks_incomplete_tasks(self):
         repo = self.make_repo()
@@ -195,6 +327,7 @@ class CoreTests(unittest.TestCase):
         self.make_spec_feature(repo)
         result = verify_spec_kit(repo, "full")
         self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["clarification"]["status"], "PASS")
 
     def test_critical_spec_kit_gate_requires_complete_checklists(self):
         repo = self.make_repo()
