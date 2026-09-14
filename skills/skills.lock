@@ -1,0 +1,10 @@
+# name|source path|git tree sha
+project-onboarding|skills/project-onboarding|19d837a67bcaac2305a72dfff2c6acba2ab1117e
+feature-planning|skills/feature-planning|db8fb1826baa5e1ea570c277be65f11fd494488f
+bug-investigation|skills/bug-investigation|7b435ba434a8399952005a61df0741f04ef804d7
+code-review|skills/code-review|d10c48b95c98cb39f2b2cfbcf976e052e12072d6
+mauro-coding-style|skills/mauro-coding-style|163dfff152bb9c722788ccaf6a00540f4057f213
+mauro-crud|skills/mauro-crud|9fa2f56d9842338241c007090132b96a91ac8455
+frontend-change|skills/frontend-change|2271856b8b4fcf809f669f64a5d28c12382a81b6
+php-ai-integration|skills/php-ai-integration|cff03fdf3712b6ac96b4002eb42697c6bed2cab3
+mysql-change-safety|skills/mysql-change-safety|426cd1757a125f6844b4e1f53a326841d23cab3c
