@@ -5,12 +5,14 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from onboarding.bootstrap_project import bootstrap
 from onboarding.validate_project import ContractError, validate
 from runtime.analyze_repository import analyze
 from runtime.intake_gate import intake
 from runtime.routing import route
+from runtime.spec_kit import status as spec_kit_status
 from runtime.spec_kit_gate import verify as verify_spec_kit
 
 
@@ -89,18 +91,57 @@ class CoreTests(unittest.TestCase):
 
     def test_external_orchestrator_requires_evidence(self):
         repo = self.make_repo()
-        payload = intake(
-            repo,
-            request="Change one thing",
-            mode="external-orchestrator",
-            issue_number=7,
-            workspace="/tmp/mau-test-workspace",
-            prepare_workspace=False,
-        )
+        with patch(
+            "runtime.intake_gate.spec_kit_status",
+            return_value={"status": "READY", "initialized": True, "integration": "codex"},
+        ):
+            payload = intake(
+                repo,
+                request="Change one thing",
+                mode="external-orchestrator",
+                issue_number=7,
+                workspace="/tmp/mau-test-workspace",
+                prepare_workspace=False,
+            )
         self.assertTrue(payload["write_authorized"])
+        self.assertTrue(payload["implementation_authorized"])
         self.assertIn("work_item", payload["delegated_to_orchestrator"])
         self.assertEqual(payload["schema_version"], 2)
         self.assertEqual(payload["execution"]["workflow_profile"], "standard")
+
+    def test_spec_kit_setup_blocks_implementation_but_allows_reconciliation(self):
+        repo = self.make_repo()
+        with patch(
+            "runtime.intake_gate.spec_kit_status",
+            return_value={"status": "NEEDS_INIT", "initialized": False, "integration": None},
+        ):
+            payload = intake(
+                repo,
+                request="Change one thing",
+                mode="external-orchestrator",
+                issue_number=7,
+                workspace="/tmp/mau-test-workspace",
+                prepare_workspace=False,
+            )
+        self.assertTrue(payload["write_authorized"])
+        self.assertFalse(payload["implementation_authorized"])
+        self.assertTrue(payload["gate_reconciliation_authorized"])
+        self.assertEqual(payload["execution"]["status"], "NEEDS_RECONCILE")
+        self.assertEqual(payload["execution"]["actions"][0]["type"], "initialize_spec_kit")
+
+    def test_initialized_spec_kit_does_not_require_cli_for_execution(self):
+        repo = self.make_repo()
+        specify = repo / ".specify"
+        specify.mkdir()
+        (specify / "integration.json").write_text(
+            json.dumps({"integration": "codex"}),
+            encoding="utf-8",
+        )
+        with patch("runtime.spec_kit.shutil.which", return_value=None):
+            result = spec_kit_status(repo)
+        self.assertEqual(result["status"], "READY")
+        self.assertFalse(result["cli_available"])
+        self.assertEqual(result["integration"], "codex")
 
     def test_bad_schema_is_rejected(self):
         repo = self.make_repo()
@@ -128,6 +169,11 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(routed["workflow"]["profile"], "trivial")
         self.assertEqual(routed["verification"]["profile"], "minimal")
         self.assertEqual(routed["model_policy"]["implementation"], "economy")
+
+    def test_trivial_keyword_does_not_downgrade_structural_work(self):
+        routed = route("Aggiungi un nuovo editor per il testo")
+        self.assertNotEqual(routed["complexity"]["level"], "TRIVIAL")
+        self.assertEqual(routed["workflow"]["engine"], "spec-kit")
 
     def test_new_section_uses_full_spec_kit_workflow(self):
         routed = route("Aggiungi una nuova sezione del gestionale per lo storico controlli")
