@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from onboarding.onboarding_gate import evaluate as evaluate_onboarding
 from onboarding.validate_project import ContractError, VERIFICATION_PROFILES, validate
 from runtime.analyze_repository import analyze
 from runtime.spec_kit_gate import PROFILES as SPEC_KIT_PROFILES
@@ -54,17 +55,27 @@ def finish(
     verification_profile: str | None = None,
 ) -> dict:
     root = Path(analyze(repository)["repository"]["root"])
+    onboarding = evaluate_onboarding(root)
+    if onboarding.get("status") != "READY":
+        return {
+            "schema_version": 2,
+            "kind": "mau.completion",
+            "status": "BLOCKED",
+            "reason": "repository onboarding is not READY",
+            "onboarding": onboarding,
+        }
 
     try:
         selected_verification = _resolve_verification_profile(workflow_profile, verification_profile)
     except ContractError as exc:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "reason": str(exc),
             "workflow_profile": workflow_profile,
             "verification_profile": verification_profile,
+            "onboarding": onboarding,
         }
 
     spec_kit = None
@@ -72,28 +83,30 @@ def finish(
         spec_kit = verify_spec_kit(root, workflow_profile)
         if spec_kit["status"] not in {"PASS", "NOT_APPLICABLE"}:
             return {
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": "mau.completion",
                 "status": "BLOCKED",
                 "reason": "Spec Kit workflow artifacts are incomplete",
                 "workflow_profile": workflow_profile,
                 "verification_profile": selected_verification,
+                "onboarding": onboarding,
                 "spec_kit": spec_kit,
             }
 
     try:
         contract = validate(root, run_verification=True, verification_profile=selected_verification)
     except ContractError as exc:
-        return {"schema_version": 1, "kind": "mau.completion", "status": "BLOCKED", "reason": str(exc)}
+        return {"schema_version": 2, "kind": "mau.completion", "status": "BLOCKED", "reason": str(exc), "onboarding": onboarding}
 
     verification = contract["verification"]
     if verification not in {"PASS", "NOT_APPLICABLE"}:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "verification": verification,
             "verification_profile": selected_verification,
+            "onboarding": onboarding,
             "spec_kit": spec_kit,
             "reason": "project verification does not permit completion",
         }
@@ -101,11 +114,12 @@ def finish(
     diffcheck = _run(["git", "diff", "--check"], root)
     if diffcheck.returncode != 0:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "verification": verification,
             "verification_profile": selected_verification,
+            "onboarding": onboarding,
             "spec_kit": spec_kit,
             "reason": diffcheck.stdout.strip() or diffcheck.stderr.strip() or "git diff --check failed",
         }
@@ -113,11 +127,12 @@ def finish(
     branch = _run(["git", "branch", "--show-current"], root).stdout.strip()
     if not branch or branch == base:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "verification": verification,
             "verification_profile": selected_verification,
+            "onboarding": onboarding,
             "spec_kit": spec_kit,
             "reason": "work must finish on an isolated non-base branch",
         }
@@ -125,11 +140,12 @@ def finish(
     status = _run(["git", "status", "--porcelain"], root).stdout.strip()
     if status:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "verification": verification,
             "verification_profile": selected_verification,
+            "onboarding": onboarding,
             "spec_kit": spec_kit,
             "reason": "working tree has uncommitted changes",
         }
@@ -181,12 +197,13 @@ def finish(
 
     overall = "READY_FOR_REVIEW" if (not create_pr or delivery.get("status") == "READY") else "BLOCKED"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "mau.completion",
         "status": overall,
         "verification": verification,
         "verification_profile": selected_verification,
         "workflow_profile": workflow_profile,
+        "onboarding": onboarding,
         "spec_kit": spec_kit,
         "branch": branch,
         "delivery": delivery,
