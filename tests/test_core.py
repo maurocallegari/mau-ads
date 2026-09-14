@@ -17,6 +17,19 @@ from runtime.spec_kit_gate import clarification_state, verify as verify_spec_kit
 
 
 class CoreTests(unittest.TestCase):
+    def setUp(self):
+        onboarding = {
+            "status": "READY",
+            "user_input_required": False,
+            "purpose": "test repository",
+            "canonical_source": ".",
+            "verification_command": "dev/verify-local.sh",
+            "verification_baseline": "PASS",
+        }
+        onboarding_patch = patch("runtime.intake_gate.evaluate_onboarding", return_value=onboarding)
+        onboarding_patch.start()
+        self.addCleanup(onboarding_patch.stop)
+
     def make_repo(self) -> Path:
         root = Path(tempfile.mkdtemp())
         subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -126,7 +139,7 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(payload["write_authorized"])
         self.assertTrue(payload["implementation_authorized"])
         self.assertIn("work_item", payload["delegated_to_orchestrator"])
-        self.assertEqual(payload["schema_version"], 3)
+        self.assertEqual(payload["schema_version"], 4)
         self.assertEqual(payload["execution"]["workflow_profile"], "standard")
 
     def test_nontrivial_intake_requires_clarification_assessment(self):
