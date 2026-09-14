@@ -14,12 +14,15 @@ Before any durable edit in a target repository, a compatible worker must automat
 NO VALID MAU WORK CONTEXT -> NO DURABLE WRITES
 ```
 
+The returned execution contract is authoritative for the current work item. It defines the minimum workflow profile and minimum verification profile. A worker may strengthen them when repository evidence requires it, but must not silently downgrade them.
+
 ## Authority
 
 - Repository code and Git history are authoritative for implementation.
 - GitHub Issues identify independently deliverable work; Pull Requests carry reviewable delivery evidence.
 - Project-local `AGENTS.md`, `.ai/project.json`, `PROJECT.md` and repository code override generic assumptions when they are more specific and do not violate safety constraints.
 - Transient repository analysis is evidence, not a second durable knowledge database.
+- Spec Kit artifacts structure non-trivial work; they do not replace the GitHub Issue, repository contract or executable verification as sources of truth.
 
 ## Before editing
 
@@ -28,7 +31,8 @@ NO VALID MAU WORK CONTEXT -> NO DURABLE WRITES
 - Reuse existing patterns before inventing new abstractions.
 - Resolve implementation facts from repository evidence before asking a human.
 - Use one canonical GitHub Issue for one independently deliverable outcome.
-- Do not create duplicate Issues for internal worker subtasks.
+- Do not create duplicate Issues for internal worker or Spec Kit subtasks.
+- Follow the workflow sequence returned by intake. When `engine=spec-kit`, initialize Spec Kit in the isolated workspace when needed and produce the required artifacts before completion.
 
 ## Repository analysis
 
@@ -53,11 +57,13 @@ NO VALID MAU WORK CONTEXT -> NO DURABLE WRITES
 
 ## Verification
 
-- Run the strongest practical project-defined checks proportional to scope and risk.
+- Run the strongest practical project-defined checks proportional to scope and risk, never below the verification profile returned by intake.
+- MAU supplies the selected level to the project verifier through `MAU_VERIFICATION_PROFILE`.
 - A missing or unavailable check is not a PASS.
 - Inspect the final diff for unintended behavior, generated files, secrets, formatting regressions and unrelated edits.
 - Never claim execution or verification that did not occur.
 - Valid states are `PASS`, `FAIL`, `UNAVAILABLE`, `NOT_RUN`, and `NOT_APPLICABLE`.
+- For Spec Kit-routed work, the MAU Spec Kit artifact gate must pass before completion. Unchecked implementation tasks block completion; critical work also requires completed checklist evidence.
 
 ## Safety
 
@@ -70,7 +76,8 @@ NO VALID MAU WORK CONTEXT -> NO DURABLE WRITES
 
 ```text
 request -> intake -> analysis/onboarding -> Issue -> isolated implementation
-        -> verification -> PR -> review/merge -> READY_TO_DEPLOY
+        -> routed workflow -> proportional verification -> completion gate
+        -> PR -> review/merge -> READY_TO_DEPLOY
 ```
 
 Merge is not production authorization.
@@ -89,3 +96,5 @@ Do not record transient task state as permanent repository knowledge.
 ## Orchestrators
 
 A local orchestrator may dispatch workers and own ephemeral execution state, but it must not become a competing authority for source code, durable project knowledge, canonical work identity or verification truth.
+
+Spec Kit is a workflow engine, not a second task tracker or durable authority layer. The default Codex path should execute its required skill/artifact sequence within the primary coding session rather than spawning redundant orchestration layers.
