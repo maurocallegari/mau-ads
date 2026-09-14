@@ -8,8 +8,20 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from onboarding.validate_project import ContractError, validate
+from onboarding.onboarding_gate import evaluate as evaluate_onboarding
+from onboarding.validate_project import ContractError, VERIFICATION_PROFILES, validate
 from runtime.analyze_repository import analyze
+from runtime.spec_kit_gate import PROFILES as SPEC_KIT_PROFILES
+from runtime.spec_kit_gate import verify as verify_spec_kit
+
+
+WORKFLOW_VERIFICATION = {
+    "trivial": "minimal",
+    "standard": "focused",
+    "full": "full",
+    "critical": "critical",
+}
+VERIFICATION_RANK = {"minimal": 0, "focused": 1, "full": 2, "critical": 3}
 
 
 def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -23,50 +35,118 @@ def _github_repo(origin: str | None) -> str | None:
     return f"{match.group(1)}/{match.group(2)}" if match else None
 
 
-def finish(repository: str | Path, issue_number: int | None = None, base: str = "main", create_pr: bool = True) -> dict:
+def _resolve_verification_profile(workflow_profile: str | None, requested: str | None) -> str | None:
+    minimum = WORKFLOW_VERIFICATION.get(workflow_profile or "")
+    if requested is None:
+        return minimum
+    if minimum is not None and VERIFICATION_RANK[requested] < VERIFICATION_RANK[minimum]:
+        raise ContractError(
+            f"verification profile '{requested}' is below workflow minimum '{minimum}'"
+        )
+    return requested
+
+
+def finish(
+    repository: str | Path,
+    issue_number: int | None = None,
+    base: str = "main",
+    create_pr: bool = True,
+    workflow_profile: str | None = None,
+    verification_profile: str | None = None,
+) -> dict:
     root = Path(analyze(repository)["repository"]["root"])
+    onboarding = evaluate_onboarding(root)
+    if onboarding.get("status") != "READY":
+        return {
+            "schema_version": 2,
+            "kind": "mau.completion",
+            "status": "BLOCKED",
+            "reason": "repository onboarding is not READY",
+            "onboarding": onboarding,
+        }
+
     try:
-        contract = validate(root, run_verification=True)
+        selected_verification = _resolve_verification_profile(workflow_profile, verification_profile)
     except ContractError as exc:
-        return {"schema_version": 1, "kind": "mau.completion", "status": "BLOCKED", "reason": str(exc)}
+        return {
+            "schema_version": 2,
+            "kind": "mau.completion",
+            "status": "BLOCKED",
+            "reason": str(exc),
+            "workflow_profile": workflow_profile,
+            "verification_profile": verification_profile,
+            "onboarding": onboarding,
+        }
+
+    spec_kit = None
+    if workflow_profile:
+        spec_kit = verify_spec_kit(root, workflow_profile)
+        if spec_kit["status"] not in {"PASS", "NOT_APPLICABLE"}:
+            return {
+                "schema_version": 2,
+                "kind": "mau.completion",
+                "status": "BLOCKED",
+                "reason": "Spec Kit workflow artifacts are incomplete",
+                "workflow_profile": workflow_profile,
+                "verification_profile": selected_verification,
+                "onboarding": onboarding,
+                "spec_kit": spec_kit,
+            }
+
+    try:
+        contract = validate(root, run_verification=True, verification_profile=selected_verification)
+    except ContractError as exc:
+        return {"schema_version": 2, "kind": "mau.completion", "status": "BLOCKED", "reason": str(exc), "onboarding": onboarding}
 
     verification = contract["verification"]
     if verification not in {"PASS", "NOT_APPLICABLE"}:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "verification": verification,
+            "verification_profile": selected_verification,
+            "onboarding": onboarding,
+            "spec_kit": spec_kit,
             "reason": "project verification does not permit completion",
         }
 
     diffcheck = _run(["git", "diff", "--check"], root)
     if diffcheck.returncode != 0:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "verification": verification,
+            "verification_profile": selected_verification,
+            "onboarding": onboarding,
+            "spec_kit": spec_kit,
             "reason": diffcheck.stdout.strip() or diffcheck.stderr.strip() or "git diff --check failed",
         }
 
     branch = _run(["git", "branch", "--show-current"], root).stdout.strip()
     if not branch or branch == base:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "verification": verification,
+            "verification_profile": selected_verification,
+            "onboarding": onboarding,
+            "spec_kit": spec_kit,
             "reason": "work must finish on an isolated non-base branch",
         }
 
     status = _run(["git", "status", "--porcelain"], root).stdout.strip()
     if status:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "mau.completion",
             "status": "BLOCKED",
             "verification": verification,
+            "verification_profile": selected_verification,
+            "onboarding": onboarding,
+            "spec_kit": spec_kit,
             "reason": "working tree has uncommitted changes",
         }
 
@@ -91,7 +171,12 @@ def finish(repository: str | Path, issue_number: int | None = None, base: str = 
                     delivery = {"status": "READY", "source": "existing", **matches[0]}
                 else:
                     title = _run(["git", "log", "-1", "--pretty=%s"], root).stdout.strip() or branch
-                    body = f"MAU ADS verified delivery.\n\nVerification: {verification}\n"
+                    body = (
+                        "MAU ADS verified delivery.\n\n"
+                        f"Verification: {verification}\n"
+                        f"Verification profile: {selected_verification or 'default'}\n"
+                        f"Workflow profile: {workflow_profile or 'legacy/default'}\n"
+                    )
                     if issue_number:
                         body += f"\nCloses #{issue_number}\n"
                     created = _run(
@@ -112,10 +197,14 @@ def finish(repository: str | Path, issue_number: int | None = None, base: str = 
 
     overall = "READY_FOR_REVIEW" if (not create_pr or delivery.get("status") == "READY") else "BLOCKED"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "mau.completion",
         "status": overall,
         "verification": verification,
+        "verification_profile": selected_verification,
+        "workflow_profile": workflow_profile,
+        "onboarding": onboarding,
+        "spec_kit": spec_kit,
         "branch": branch,
         "delivery": delivery,
         "production_authorized": False,
@@ -128,9 +217,18 @@ def main() -> int:
     parser.add_argument("--issue", type=int)
     parser.add_argument("--base", default="main")
     parser.add_argument("--no-pr", action="store_true")
+    parser.add_argument("--workflow-profile", choices=sorted(SPEC_KIT_PROFILES))
+    parser.add_argument("--verification-profile", choices=sorted(VERIFICATION_PROFILES))
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
-    payload = finish(args.repository, args.issue, args.base, not args.no_pr)
+    payload = finish(
+        args.repository,
+        args.issue,
+        args.base,
+        not args.no_pr,
+        args.workflow_profile,
+        args.verification_profile,
+    )
     print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
     return 0 if payload["status"] == "READY_FOR_REVIEW" else 2
 

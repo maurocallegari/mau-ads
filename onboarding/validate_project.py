@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 REQUIRED_FILES = ["AGENTS.md", "PROJECT.md", ".ai/project.json"]
 VERIFICATION_STATES = {0: "PASS", 1: "FAIL", 2: "UNAVAILABLE", 3: "NOT_RUN", 4: "NOT_APPLICABLE"}
+VERIFICATION_PROFILES = {"minimal", "focused", "full", "critical"}
 
 
 class ContractError(RuntimeError):
@@ -56,10 +58,16 @@ def verification_path(root: Path, manifest: dict) -> Path:
     return path
 
 
-def validate(repository: str | Path, run_verification: bool = False) -> dict:
+def validate(
+    repository: str | Path,
+    run_verification: bool = False,
+    verification_profile: str | None = None,
+) -> dict:
     root = Path(repository).expanduser().resolve()
     if not root.is_dir():
         raise ContractError(f"not a directory: {root}")
+    if verification_profile is not None and verification_profile not in VERIFICATION_PROFILES:
+        raise ContractError(f"unknown verification profile: {verification_profile}")
 
     missing = [item for item in REQUIRED_FILES if not (root / item).is_file()]
     if missing:
@@ -77,11 +85,15 @@ def validate(repository: str | Path, run_verification: bool = False) -> dict:
         "contract": "PASS",
         "verification": "NOT_RUN",
         "verification_command": verify.relative_to(root).as_posix(),
+        "verification_profile": verification_profile,
     }
 
     if run_verification:
         command = ["bash", str(verify)] if verify.suffix == ".sh" else [str(verify)]
-        completed = subprocess.run(command, cwd=root, check=False)
+        env = os.environ.copy()
+        if verification_profile:
+            env["MAU_VERIFICATION_PROFILE"] = verification_profile
+        completed = subprocess.run(command, cwd=root, check=False, env=env)
         result["verification"] = VERIFICATION_STATES.get(completed.returncode, "FAIL")
         result["verification_exit_code"] = completed.returncode
     return result
@@ -91,11 +103,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the MAU ADS project contract")
     parser.add_argument("repository", nargs="?", default=".")
     parser.add_argument("--run-verification", action="store_true")
+    parser.add_argument("--verification-profile", choices=sorted(VERIFICATION_PROFILES))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     try:
-        payload = validate(args.repository, args.run_verification)
+        payload = validate(args.repository, args.run_verification, args.verification_profile)
     except ContractError as exc:
         payload = {
             "schema_version": SCHEMA_VERSION,
@@ -115,7 +128,8 @@ def main() -> int:
     else:
         print("PASS: repository contract")
         if args.run_verification:
-            print(f"{payload['verification']}: project verification")
+            suffix = f" ({args.verification_profile})" if args.verification_profile else ""
+            print(f"{payload['verification']}: project verification{suffix}")
     return 0
 
 
