@@ -1,14 +1,24 @@
 # Development workflow
 
-## 1. Resolve context
+## 1. Resolve repository readiness
 
-Read repository-owned instructions and inspect the relevant code path before making durable edits.
+MAU intake is the machine-facing entry point. Before task work exists, it checks the repository contract and onboarding gate.
 
-MAU intake is the machine-facing entry point. It returns the canonical Issue/workspace plus a deterministic execution contract containing risk, complexity, workflow profile, clarification state, verification profile and model capability tiers.
+```text
+repository contract valid?
+  -> no: bootstrap/repair contract
+  -> yes: onboarding READY?
+       -> no: assess repository / ask only unresolved facts / configure verifier
+       -> yes: feature work may proceed
+```
+
+Bootstrap alone is not onboarding completion. A repository becomes `READY` only after purpose and canonical source are resolved with evidence and a real repository-owned verifier has passed a `focused` baseline.
+
+While onboarding is incomplete, application-code implementation, feature Issue creation and implementation-workspace creation remain blocked. Only onboarding reconciliation files may be changed.
 
 ## 2. Define the outcome
 
-Use one canonical GitHub Issue for one independently deliverable outcome. Internal planner or Spec Kit task steps do not automatically become more Issues.
+Once onboarding is `READY`, use one canonical GitHub Issue for one independently deliverable outcome. Internal planner or Spec Kit task steps do not automatically become more Issues.
 
 ## 3. Isolate the writer
 
@@ -40,7 +50,7 @@ The returned profile is a floor, not permission to ignore stronger repository ev
 
 See [`SPEC-KIT.md`](SPEC-KIT.md).
 
-## 5. Resolve ambiguity before implementation
+## 5. Resolve task ambiguity before implementation
 
 For every Spec Kit-routed task, `implementation_authorized` remains false until the active feature has a valid `clarification.json` and the clarification gate returns `PASS`.
 
@@ -96,8 +106,9 @@ NOT_APPLICABLE  the check genuinely does not apply
 
 Before delivery, MAU completion verifies:
 
+- repository onboarding is still `READY`;
 - required Spec Kit artifacts for non-trivial profiles;
-- valid resolved clarification evidence;
+- valid resolved task-clarification evidence;
 - no incomplete implementation tasks;
 - critical checklist completion when required;
 - repository-owned verification at the selected profile;
