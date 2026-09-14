@@ -8,6 +8,7 @@ The **core operating model remains repository-first**:
 - work identity through GitHub Issues;
 - isolated implementation workspaces;
 - deterministic risk/complexity routing;
+- mandatory pre-implementation clarification for Spec Kit-routed work;
 - Spec Kit artifacts for standard/full/critical workflows;
 - project-defined proportional testing and verification;
 - reviewable delivery through Pull Requests;
@@ -19,12 +20,21 @@ Current routing contract:
 
 ```text
 trivial  -> direct workflow -> minimal verification
-standard -> Spec Kit core   -> focused verification
-full     -> Spec Kit full   -> full verification
-critical -> Spec Kit + safety/checklist gates -> critical verification
+standard -> specify -> clarify -> clarification gate -> focused verification
+full     -> specify -> clarify -> clarification gate -> full workflow -> full verification
+critical -> full workflow + clarification + safety/checklist gates -> critical verification
 ```
 
-MAU owns intake, GitHub work identity, isolation, routing, minimum verification profile and completion. Spec Kit owns specification/planning/task artifacts when selected. The target repository owns executable verification.
+An apparently small but under-specified request is deliberately promoted out of `trivial`. Non-trivial implementation remains blocked until the active Spec Kit feature contains a valid `clarification.json` and the clarification gate returns `PASS`.
+
+The clarification contract separates what the agent may resolve itself from what must be asked:
+
+- repository-backed implementation facts: resolve automatically;
+- sourced non-substantive technical assumptions: allowed;
+- missing functional behavior, risk acceptance or irreversible/destructive semantics: ask the user;
+- unresolved questions: `NEEDS_CLARIFICATION`, `user_input_required=true`, `implementation_authorized=false`.
+
+MAU owns intake, GitHub work identity, isolation, routing, clarification state, minimum verification profile and completion. Spec Kit owns specification/planning/task artifacts when selected. The target repository owns executable verification.
 
 The default direct-agent design does not require an additional orchestrator or a separate agent process for every Spec Kit phase. Model routing is currently expressed as portable capability/cost tiers (`economy`, `balanced`, `strong`); mapping those tiers to concrete providers/models belongs to the executor/orchestrator and is not faked by MAU.
 
