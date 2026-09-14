@@ -20,6 +20,7 @@ WORKFLOW_VERIFICATION = {
     "full": "full",
     "critical": "critical",
 }
+VERIFICATION_RANK = {"minimal": 0, "focused": 1, "full": 2, "critical": 3}
 
 
 def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -33,6 +34,17 @@ def _github_repo(origin: str | None) -> str | None:
     return f"{match.group(1)}/{match.group(2)}" if match else None
 
 
+def _resolve_verification_profile(workflow_profile: str | None, requested: str | None) -> str | None:
+    minimum = WORKFLOW_VERIFICATION.get(workflow_profile or "")
+    if requested is None:
+        return minimum
+    if minimum is not None and VERIFICATION_RANK[requested] < VERIFICATION_RANK[minimum]:
+        raise ContractError(
+            f"verification profile '{requested}' is below workflow minimum '{minimum}'"
+        )
+    return requested
+
+
 def finish(
     repository: str | Path,
     issue_number: int | None = None,
@@ -43,6 +55,18 @@ def finish(
 ) -> dict:
     root = Path(analyze(repository)["repository"]["root"])
 
+    try:
+        selected_verification = _resolve_verification_profile(workflow_profile, verification_profile)
+    except ContractError as exc:
+        return {
+            "schema_version": 1,
+            "kind": "mau.completion",
+            "status": "BLOCKED",
+            "reason": str(exc),
+            "workflow_profile": workflow_profile,
+            "verification_profile": verification_profile,
+        }
+
     spec_kit = None
     if workflow_profile:
         spec_kit = verify_spec_kit(root, workflow_profile)
@@ -52,10 +76,11 @@ def finish(
                 "kind": "mau.completion",
                 "status": "BLOCKED",
                 "reason": "Spec Kit workflow artifacts are incomplete",
+                "workflow_profile": workflow_profile,
+                "verification_profile": selected_verification,
                 "spec_kit": spec_kit,
             }
 
-    selected_verification = verification_profile or WORKFLOW_VERIFICATION.get(workflow_profile or "", None)
     try:
         contract = validate(root, run_verification=True, verification_profile=selected_verification)
     except ContractError as exc:
