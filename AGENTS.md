@@ -16,6 +16,8 @@ NO VALID MAU WORK CONTEXT -> NO DURABLE WRITES
 
 The returned execution contract is authoritative for the current work item. It defines the minimum workflow profile and minimum verification profile. A worker may strengthen them when repository evidence requires it, but must not silently downgrade them.
 
+`write_authorized=true` permits only the writes represented by the current gate state. When `implementation_authorized=false`, execute only the explicit gate-reconciliation actions (for example installing/initializing Spec Kit), rerun intake, and do not edit application code until implementation becomes authorized.
+
 ## Authority
 
 - Repository code and Git history are authoritative for implementation.
@@ -32,7 +34,7 @@ The returned execution contract is authoritative for the current work item. It d
 - Resolve implementation facts from repository evidence before asking a human.
 - Use one canonical GitHub Issue for one independently deliverable outcome.
 - Do not create duplicate Issues for internal worker or Spec Kit subtasks.
-- Follow the workflow sequence returned by intake. When `engine=spec-kit`, initialize Spec Kit in the isolated workspace when needed and produce the required artifacts before completion.
+- Follow the workflow sequence returned by intake. When `engine=spec-kit`, reconcile its setup first, rerun intake, and produce the required artifacts before implementation/completion.
 
 ## Repository analysis
 
@@ -75,7 +77,8 @@ The returned execution contract is authoritative for the current work item. It d
 ## Delivery
 
 ```text
-request -> intake -> analysis/onboarding -> Issue -> isolated implementation
+request -> intake -> analysis/onboarding -> Issue -> isolated workspace
+        -> gate reconciliation if required -> implementation authorized
         -> routed workflow -> proportional verification -> completion gate
         -> PR -> review/merge -> READY_TO_DEPLOY
 ```
