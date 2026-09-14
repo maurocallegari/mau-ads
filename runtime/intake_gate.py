@@ -107,9 +107,35 @@ def _execution_contract(routing: dict, work: dict) -> dict:
     verification = routing["verification"]
     workspace = work.get("path") if work.get("status") == "READY" else None
     requires_spec_kit = workflow["engine"] == "spec-kit"
-    kit = None
-    if requires_spec_kit and workspace:
-        kit = spec_kit_status(workspace)
+    kit = spec_kit_status(workspace) if requires_spec_kit and workspace else None
+
+    actions: list[dict] = []
+    if requires_spec_kit and kit and kit.get("status") == "NEEDS_INIT":
+        actions.append(
+            {
+                "type": "initialize_spec_kit",
+                "workspace": workspace,
+                "integration": "codex",
+                "script": "py",
+                "preset": "lean",
+            }
+        )
+    if requires_spec_kit and kit and kit.get("status") == "UNAVAILABLE":
+        actions.append(
+            {
+                "type": "install_spec_kit_cli",
+                "reason": kit.get("reason"),
+            }
+        )
+
+    actions.append(
+        {
+            "type": "complete_work",
+            "workspace": workspace,
+            "workflow_profile": workflow["profile"],
+            "verification_profile": verification["profile"],
+        }
+    )
 
     return {
         "engine": workflow["engine"],
@@ -120,15 +146,7 @@ def _execution_contract(routing: dict, work: dict) -> dict:
         "model_policy": routing["model_policy"],
         "spec_kit_required": requires_spec_kit,
         "spec_kit": kit,
-        "spec_kit_init": (
-            "python3 runtime/spec_kit.py init <workspace> --integration codex"
-            if requires_spec_kit and kit and kit.get("status") == "NEEDS_INIT"
-            else None
-        ),
-        "completion_gate": (
-            "python3 runtime/completion_gate.py <workspace> "
-            f"--workflow-profile {workflow['profile']} --verification-profile {verification['profile']}"
-        ),
+        "actions": actions,
     }
 
 
