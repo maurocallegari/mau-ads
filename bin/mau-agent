@@ -2,4 +2,40 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 "$ROOT/runtime/intake_gate.py" "$@"
+
+cmd="${1:-run}"
+case "$cmd" in
+  run)
+    shift || true
+    exec python3 "$ROOT/runtime/workflow.py" "$@"
+    ;;
+  intake)
+    shift
+    exec python3 "$ROOT/runtime/intake_gate.py" "$@"
+    ;;
+  finish)
+    shift
+    exec python3 "$ROOT/runtime/completion_gate.py" "$@"
+    ;;
+  preflight)
+    shift
+    exec python3 "$ROOT/runtime/preflight.py" "$@"
+    ;;
+  analyze)
+    shift
+    exec python3 "$ROOT/runtime/analyze_repository.py" "$@"
+    ;;
+  validate)
+    shift
+    exec python3 "$ROOT/onboarding/validate_project.py" "$@"
+    ;;
+  onboard)
+    shift
+    exec python3 "$ROOT/onboarding/bootstrap_project.py" "$@"
+    ;;
+  *)
+    # Backward compatible: older callers passed repository/flags directly and
+    # expected intake behavior. Preserve that route explicitly.
+    exec python3 "$ROOT/runtime/intake_gate.py" "$@"
+    ;;
+esac

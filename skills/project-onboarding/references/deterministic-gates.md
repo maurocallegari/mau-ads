@@ -1,87 +1,37 @@
 # Deterministic onboarding gates
 
-## Gate model
+A gate has a stable name, current evidence, deterministic rule and recovery action. `UNKNOWN`, `NOT_RUN`, missing, stale or unverifiable evidence never becomes PASS.
 
-A gate is valid only when it has a stable name, observed value, current evidence, deterministic pass rule, and concrete recovery action.
-
-`UNKNOWN`, `NOT_RUN`, missing, stale, unparsable and unverifiable do not become `PASS`.
-
-## Core gates — every project
+## Core gates
 
 | Gate | Required proof |
 |---|---|
-| ISSUE_IDENTITY | canonical GitHub Issue when durable work occurs |
-| WORKSPACE_AUTHORITY | exact repository root; no parent/competing Git authority |
-| PROFILE_RESOLVED | tracked `.ai/project.json` or deterministic profile resolution |
-| SECRETS_EXCLUDED | no real secrets/runtime customer data in tracked files |
-| KNOWLEDGE_BASELINE | current `AGENTS.md`, `PROJECT.md`, and justified `REPO_MAP.md` |
-| VERIFICATION_ENTRYPOINT | executable project verification declared in `.ai/project.json` |
-| VERIFICATION_RESULT | current project verification passes with explicit evidence |
-| GIT_BASELINE | clean HEAD, branch, origin, upstream and remote alignment |
-| FINAL_AUDIT | canonical preflight/finalizer passes |
-
-For the stack-neutral `generic` profile, these are the normative gates. Stack-specific proof belongs in `dev/verify-local.sh` rather than being invented by ADS.
+| ISSUE_IDENTITY | canonical GitHub Issue for durable work |
+| WORKSPACE_AUTHORITY | isolated non-base Git branch/worktree |
+| CONTRACT | valid `AGENTS.md`, `PROJECT.md`, `.ai/project.json` |
+| SECRETS_EXCLUDED | runtime env/private key candidates are not tracked |
+| PRODUCTION_BOUNDARY | production deployment requires explicit authorization |
+| VERIFICATION_ENTRYPOINT | repository-owned executable verifier |
+| VERIFICATION_RESULT | current verifier result is PASS or justified NOT_APPLICABLE |
+| DIFF_INTEGRITY | `git diff --check` succeeds and intended work produced a change |
+| FINAL_AUDIT | completion preflight passes on the final workspace |
 
 ## Additional Mauro PHP gates
 
-Apply these only to the Mauro PHP profile when relevant to the application:
-
 | Gate | Required proof |
 |---|---|
-| CONFIG_BOUNDARY | tracked `require/ads.php` + thin secret-free `configure.php` + ignored single `.env` + tracked `.env.example` |
-| PHP_PARITY | production/local PHP major-minor and required extensions |
-| DATABASE_ISOLATION | local database identity and proof it is not production, when DB-backed |
-| DATABASE_SCHEMA | expected local schema/data baseline, when applicable |
-| PRODUCTION_WRITE_ISOLATION | production mail/API/upload/payment/write integrations blocked or redirected locally |
-| URL_PATH_BOUNDARY | redirects, assets, AJAX/API, exports and filesystem paths remain local |
-| RUNTIME_SMOKE | stable local runtime responds through the expected entrypoints |
-| FUNCTIONAL_MATRIX | representative behavior across applicable web mechanisms |
+| CONFIG_BOUNDARY | `require/ads.php`, thin `configure.php`, tracked `.env.example` |
+| LOCAL_RUNTIME_ENV | local `.env` exists in the worktree and remains ignored/untracked |
+| PHP_PARITY | project verifier proves required PHP version/extensions |
+| DATABASE_ISOLATION | project verifier proves local DB identity is not production |
+| DATABASE_SCHEMA | expected local schema/data baseline when applicable |
+| PRODUCTION_WRITE_ISOLATION | external production writes are blocked/redirected locally |
+| URL_PATH_BOUNDARY | local URLs/paths/assets/AJAX/exports stay local |
+| RUNTIME_SMOKE | local runtime responds through expected entrypoints |
+| FUNCTIONAL_MATRIX | representative behavior across mechanisms used by the app |
 
-A gate that truly does not apply may be `NOT_APPLICABLE`, but only with observed evidence explaining why.
+The generic MAU runtime enforces the first two Mauro-specific structural gates directly. Application/runtime-specific proof belongs in the repository verifier because only the project knows the correct commands and expected behavior.
 
-## Mauro PHP functional matrix
+## Recovery loop
 
-Use this only for a web application where the mechanisms exist:
-
-```text
-public_bootstrap
-authentication_session
-navigation
-list_table
-detail_form
-ajax_api
-assets_layout
-print_report_export
-upload_download
-logout
-```
-
-A successful homepage alone is not certification.
-
-## Generic verification examples
-
-The generic profile can use any coherent repository-owned verifier, for example:
-
-```text
-Python:      pytest + lint/type checks
-Node/TS:     npm test + npm run build
-Go:          go test ./...
-Rust:        cargo test
-Java:        project build/test command
-Static site: build + link/browser smoke checks
-Library/CLI: unit/integration tests + package/build validation
-```
-
-ADS cares that the verifier is explicit, executable, current and truthful; it does not force one technology.
-
-## Recovery
-
-Classify failures before changing application code:
-
-1. shared ADS/onboarding contract defect;
-2. missing repository/runtime evidence;
-3. project configuration defect;
-4. pre-existing application defect;
-5. genuine authority/destructive-choice blocker.
-
-After a fix, invalidate stale evidence and rerun from the earliest affected gate.
+On failure, MAU returns executable evidence to the worker. The worker may repair implementation/configuration/tests, but must not weaken a correct gate merely to obtain PASS. The loop is bounded by `workflow.max_fix_attempts`.

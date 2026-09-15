@@ -1,73 +1,71 @@
 # MAU ADS
 
-Un operating layer repository-first per lo sviluppo software assistito da AI.
+Un piccolo sistema operativo repository-first per lo sviluppo software assistito da AI.
 
-La persona fa una normale richiesta di sviluppo. MAU ADS viene usato automaticamente dall'agente di coding o dall'orchestratore per rendere il lavoro tracciabile, isolato e verificabile, senza legare il workflow a un modello, linguaggio, framework o prodotto di orchestrazione specifico.
+L'utente descrive il risultato da ottenere. MAU ADS trasforma la richiesta in una consegna tracciata, isolata e verificata senza chiedere all'utente di ricordarsi il workflow.
 
-**L'utente non deve ricordarsi comandi MAU.** Gli entry point runtime esistono per agenti e orchestratori.
-
-Per una spiegazione completa e operativa in italiano: [`GUIDA-IT.md`](GUIDA-IT.md).
-
-## Lifecycle automatico
+## Ciclo richiesta -> READY
 
 ```text
 RICHIESTA
-  -> intake gate automatico
-  -> analisi / refresh repository
-  -> onboarding automatico se necessario
-  -> validazione del contratto del progetto
-  -> work item canonico
-  -> workspace isolato
-  -> implementazione
-  -> verifica definita dal progetto
-  -> pull request / review
-  -> merge
-  -> READY_TO_DEPLOY
-  -> produzione solo con autorizzazione esplicita
+  -> Issue GitHub canonica
+  -> worktree isolata
+  -> analisi / onboarding se necessario
+  -> preflight deterministico
+  -> coding worker
+  -> verifica posseduta dal progetto
+  -> completion gate deterministico
+  -> loop di correzione se qualcosa fallisce
+  -> commit eseguito da MAU
+  -> push / Pull Request
+  -> READY
 ```
 
-## Contratto del progetto
+La produzione resta sempre un'autorizzazione separata.
 
-Un repository AI-ready espone un contratto piccolo ed esplicito:
+Entry point machine-facing:
 
-- `AGENTS.md` — regole operative per qualsiasi worker;
-- `.ai/project.json` — metadati machine-readable e punto di ingresso della verifica;
-- `PROJECT.md` — conoscenza durevole specifica del progetto;
-- `REPO_MAP.md` — navigazione compatta opzionale quando la struttura non è ovvia;
-- un entry point di verifica posseduto dal repository e dichiarato in `.ai/project.json`.
+```bash
+bin/mau-agent run /percorso/repo --request "Implementa il risultato richiesto"
+```
 
-Vedi [`examples/repository/`](examples/repository/) per un esempio minimo completo.
+Normalmente non è un comando che deve lanciare Mauro: viene invocato automaticamente dal coding agent o da un orchestratore locale.
 
-## Invarianti fondamentali
+## Cosa governa MAU ADS
 
-1. L'evidenza del repository prevale sulla memoria della sessione.
-2. Senza un MAU work context valido non sono consentite modifiche durevoli.
-3. Un outcome consegnabile indipendentemente corrisponde normalmente a una sola Issue GitHub canonica.
-4. Writer paralleli non modificano mai lo stesso working tree.
-5. L'analisi del repository è evidence-first e read-only.
-6. I test sono controlli eseguibili; la verifica è l'evidenza che l'outcome richiesto sia corretto.
-7. Gli stati di verifica devono essere veritieri: `PASS`, `FAIL`, `UNAVAILABLE`, `NOT_RUN`, `NOT_APPLICABLE`.
-8. Il merge non autorizza la produzione.
-9. Modelli, agenti e orchestratori sono sostituibili.
+- analisi repository e bootstrap sicuro dell'onboarding;
+- identità del lavoro tramite GitHub Issue;
+- worktree Git isolate;
+- validazione del contratto del progetto;
+- preflight e completion gate deterministici;
+- invocazione del worker (Codex di default, sostituibile);
+- loop limitato `implementa -> verifica -> correggi`;
+- commit e PR soltanto dopo il PASS.
 
-## Mappa del repository
+## Cosa resta dentro ogni progetto
 
-| Percorso | Scopo |
-|---|---|
-| [`GUIDA-IT.md`](GUIDA-IT.md) | guida completa in italiano |
-| [`START-HERE.md`](START-HERE.md) | ingresso operativo breve per umano/worker |
-| [`AGENTS.md`](AGENTS.md) | contratto operativo executor-neutral |
-| [`skills/`](skills/) | catalogo pubblico delle skill riusabili e regole di routing |
-| [`docs/AUTOMATIC-LIFECYCLE.md`](docs/AUTOMATIC-LIFECYCLE.md) | lifecycle automatico invisibile |
-| [`docs/REPOSITORY-ANALYSIS.md`](docs/REPOSITORY-ANALYSIS.md) | discovery evidence-first del repository |
-| [`docs/STANDALONE.md`](docs/STANDALONE.md) | ownership nel profilo standalone |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | ownership e confini del sistema |
-| [`docs/DEVELOPMENT-WORKFLOW.md`](docs/DEVELOPMENT-WORKFLOW.md) | lifecycle richiesta-consegna |
-| [`docs/PROJECT-CONTRACT.md`](docs/PROJECT-CONTRACT.md) | contratto minimo di un repository AI-ready |
-| [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) | confini tra worker e orchestratore |
-| [`docs/SAFETY.md`](docs/SAFETY.md) | confini di sicurezza |
-| [`runtime/`](runtime/) | primitive machine-facing di intake, analisi e completion |
-| [`onboarding/`](onboarding/) | bootstrap sicuro e validazione del contratto |
-| [`examples/repository/`](examples/repository/) | repository minimo di esempio |
+- `AGENTS.md` — invarianti operative e di sicurezza;
+- `.ai/project.json` — profilo, ambienti, verifier e default workflow;
+- `PROJECT.md` — conoscenza durevole del progetto;
+- `REPO_MAP.md` — mappa opzionale;
+- `dev/verify-local.sh` o equivalente — verifica eseguibile reale.
 
-Versione inglese: [`README.md`](README.md)
+Segreti, dati runtime e stato temporaneo dei task non vanno versionati.
+
+## Profili
+
+`generic` resta neutro rispetto allo stack.
+
+`mauro-php` aggiunge il confine locale/produzione usato nelle applicazioni PHP di Mauro: un solo `.env` ignorato, `.env.example` tracciato, `require/ads.php`, `configure.php` sottile, isolamento DB/runtime locale e protezione dalle scritture di produzione. ADS non inventa segreti: il worker completa la configurazione usando evidenza reale del repository e i gate impediscono READY finché i controlli richiesti non passano.
+
+## Una sola pipeline
+
+Spec Kit, Harbor/eval-engineering, Orca e strumenti simili non sono dipendenze runtime di MAU ADS. Possono essere usati esternamente per specifiche, eval o orchestrazione, ma non creano un secondo control plane.
+
+## Verifica
+
+Gli stati ammessi sono `PASS`, `FAIL`, `UNAVAILABLE`, `NOT_RUN`, `NOT_APPLICABLE`.
+
+`UNAVAILABLE` e `NOT_RUN` non diventano mai READY. La frase del modello "ho finito" non è una prova.
+
+Guida completa: [`GUIDA-IT.md`](GUIDA-IT.md)

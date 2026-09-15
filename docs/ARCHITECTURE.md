@@ -1,17 +1,23 @@
 # Architecture
 
-MAU ADS is intentionally small. Durable truth stays in the target repository and GitHub; execution layers remain replaceable.
+MAU ADS keeps one small control plane. Durable truth stays in the target repository and GitHub; workers and higher-level orchestrators remain replaceable.
 
 ```text
-request
-  -> project contract
-  -> canonical work item
-  -> isolated worker/workspace
-  -> implementation
-  -> verification
-  -> pull request
-  -> review / merge
-  -> READY_TO_DEPLOY
+User outcome
+   |
+   v
+MAU workflow
+   |-- Issue identity
+   |-- isolated worktree
+   |-- onboarding / contract
+   |-- preflight
+   |-- worker adapter --------> Codex / other local worker
+   |-- project verifier ------> repository-owned checks
+   |-- repair loop
+   |-- verified commit
+   `-- PR delivery
+
+Target repository + GitHub remain canonical
 ```
 
 ## Ownership
@@ -23,8 +29,10 @@ request
 | Operating rules | `AGENTS.md` |
 | Machine-readable metadata | `.ai/project.json` |
 | Work identity | GitHub Issue |
-| Review/integration evidence | Pull Request |
 | Verification entry point | target repository |
-| Execution/coordination | replaceable agent/orchestrator |
+| Gate/loop mechanics | MAU ADS runtime |
+| Implementation | replaceable worker |
+| Review/integration evidence | Pull Request |
+| Production authorization | explicit external boundary |
 
-The orchestrator may coordinate workers, but it must not become a second source of truth for code, project knowledge or task identity.
+Spec/eval/orchestration products may sit beside or above MAU ADS, but they do not replace these authorities.

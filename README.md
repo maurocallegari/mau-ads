@@ -1,71 +1,90 @@
 # MAU ADS
 
-A repository-first operating layer for AI-assisted software development.
+A small, repository-first operating system for AI-assisted software development.
 
-The human gives a normal development request. MAU ADS is used automatically by the coding agent or orchestrator to make that work traceable, isolated and verifiable without binding the workflow to one model, language, framework or orchestration product.
+The user states an outcome. MAU ADS turns that request into a traceable, isolated, verified delivery without requiring the user to remember a workflow.
 
-## The automatic lifecycle
+## Request-to-ready lifecycle
 
 ```text
 REQUEST
-  -> automatic intake gate
-  -> repository analysis / refresh
-  -> automatic onboarding when required
-  -> project contract validation
-  -> canonical work item
-  -> isolated workspace
-  -> implementation
-  -> project-defined verification
-  -> pull request / review
-  -> merge
-  -> READY_TO_DEPLOY
-  -> production only with explicit authorization
+  -> canonical GitHub Issue
+  -> isolated worktree
+  -> repository analysis / onboarding when required
+  -> deterministic intake preflight
+  -> coding worker
+  -> repository-owned verification
+  -> deterministic completion preflight
+  -> repair loop when a gate fails
+  -> MAU-owned commit
+  -> push / Pull Request
+  -> READY
 ```
 
-**The user is not expected to remember MAU commands.** Internal runtime entry points exist for agents and orchestrators.
+Production deployment is always a separate authorization boundary.
 
-## Project contract
+The normal machine-facing entry point is:
 
-An AI-ready repository exposes a small, explicit contract:
+```bash
+bin/mau-agent run /path/to/repository --request "Implement the requested outcome"
+```
 
-- `AGENTS.md` — operating rules for any worker;
-- `.ai/project.json` — machine-readable metadata and verification entry point;
-- `PROJECT.md` — durable project knowledge;
-- `REPO_MAP.md` — optional compact navigation;
-- repository-owned verification entry point declared by `.ai/project.json`.
+The human should normally never need to run this command directly; a coding agent or local orchestrator invokes it automatically.
 
-See [`examples/repository/`](examples/repository/).
+## What MAU ADS owns
 
-## Core invariants
+- repository analysis and safe onboarding bootstrap;
+- GitHub Issue identity;
+- isolated Git worktrees;
+- project contract validation;
+- deterministic preflight and completion gates;
+- worker invocation (Codex by default, replaceable through `MAU_WORKER_COMMAND` / `--worker-command`);
+- bounded `implement -> verify -> repair` loops;
+- commit and PR delivery after verification passes.
 
-1. Repository evidence beats remembered session state.
-2. No valid MAU work context means no durable writes.
-3. One independently deliverable outcome normally maps to one canonical GitHub Issue.
-4. Parallel writers never mutate the same working tree.
-5. Repository analysis is evidence-first and read-only.
-6. Tests are executable checks; verification is evidence that the requested outcome is correct.
-7. Verification states are truthful: `PASS`, `FAIL`, `UNAVAILABLE`, `NOT_RUN`, `NOT_APPLICABLE`.
-8. Merge does not authorize production.
-9. Models, agents and orchestrators are replaceable.
+## What the target repository owns
+
+Every AI-ready project keeps its durable project truth with the code:
+
+- `AGENTS.md` — operating and safety invariants;
+- `.ai/project.json` — profile, environment metadata, verification entry point and workflow defaults;
+- `PROJECT.md` — durable architecture/project knowledge;
+- `REPO_MAP.md` — optional navigation map;
+- `dev/verify-local.sh` (or another declared entry point) — executable project verification.
+
+Secrets, runtime customer data and temporary task state never belong in these files.
+
+## Profiles
+
+`generic` is stack-neutral. Project-specific checks stay behind the repository-owned verifier.
+
+`mauro-php` adds the stronger local/production boundary used by Mauro's PHP applications: one ignored `.env`, tracked `.env.example`, `require/ads.php`, a thin `configure.php`, local DB/runtime isolation and production-write protection. Those requirements are completed from repository evidence by the worker and are enforced by completion gates/verifiers; MAU does not invent project secrets.
+
+## No duplicated control plane
+
+Spec Kit, Harbor/eval-engineering, Orca and similar tools are not MAU ADS runtime dependencies. They can be used externally for specification, evaluation or orchestration, but MAU ADS keeps one canonical execution path. The repository, GitHub Issue, verifier and Git history remain the sources of truth.
+
+## Verification truth
+
+The only verification states are:
+
+`PASS`, `FAIL`, `UNAVAILABLE`, `NOT_RUN`, `NOT_APPLICABLE`.
+
+`UNAVAILABLE` and `NOT_RUN` can never be promoted to READY. A worker's own statement that a task is complete is not completion evidence.
 
 ## Repository map
 
 | Path | Purpose |
 |---|---|
-| [`GUIDA-IT.md`](GUIDA-IT.md) | complete Italian guide |
-| [`START-HERE.md`](START-HERE.md) | short machine/human entry point |
-| [`AGENTS.md`](AGENTS.md) | executor-neutral operating contract |
-| [`skills/`](skills/) | published reusable skill catalog and routing rules |
-| [`docs/AUTOMATIC-LIFECYCLE.md`](docs/AUTOMATIC-LIFECYCLE.md) | invisible automatic lifecycle |
-| [`docs/REPOSITORY-ANALYSIS.md`](docs/REPOSITORY-ANALYSIS.md) | evidence-first repository discovery |
-| [`docs/STANDALONE.md`](docs/STANDALONE.md) | ownership in the standalone profile |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | ownership and system boundaries |
-| [`docs/DEVELOPMENT-WORKFLOW.md`](docs/DEVELOPMENT-WORKFLOW.md) | request-to-delivery lifecycle |
-| [`docs/PROJECT-CONTRACT.md`](docs/PROJECT-CONTRACT.md) | minimum AI-ready repository contract |
-| [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) | worker/orchestrator boundaries |
-| [`docs/SAFETY.md`](docs/SAFETY.md) | safety boundaries |
-| [`runtime/`](runtime/) | machine-facing intake and analysis primitives |
-| [`onboarding/`](onboarding/) | safe bootstrap and contract validation |
-| [`examples/repository/`](examples/repository/) | minimal example repository |
+| `runtime/workflow.py` | complete request-to-ready controller |
+| `runtime/intake_gate.py` | Issue/worktree/onboarding intake |
+| `runtime/preflight.py` | deterministic safety/profile gates |
+| `runtime/worker.py` | replaceable local worker adapter |
+| `runtime/completion_gate.py` | final verification and delivery |
+| `runtime/analyze_repository.py` | read-only repository evidence |
+| `onboarding/` | project contract bootstrap/validation |
+| `skills/` | reusable project/task knowledge |
+| `tests/` | contract and workflow regression tests |
+| `examples/repository/` | minimal portable project contract |
 
-Italian version: [`README.it.md`](README.it.md) · Complete Italian guide: [`GUIDA-IT.md`](GUIDA-IT.md)
+Italian guide: [`GUIDA-IT.md`](GUIDA-IT.md)

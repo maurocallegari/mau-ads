@@ -1,18 +1,21 @@
-# Public baseline
+# Current state — ADS 2.0
 
-This repository is the public MAU ADS baseline.
+MAU ADS has one standalone request-to-ready control path.
 
-The **core operating model remains stack-neutral**:
+Implemented core:
 
-- repository-first project contracts;
-- work identity through GitHub Issues;
-- isolated implementation workspaces;
-- project-defined testing and verification;
-- reviewable delivery through Pull Requests;
-- explicit deployment authorization boundaries;
-- orchestrator/worker portability;
-- generic onboarding validation and example repository contracts.
+- repository-first project contract;
+- GitHub Issue work identity;
+- isolated worktrees;
+- safe onboarding bootstrap inside the isolated workspace;
+- portable local/production metadata;
+- deterministic intake/completion preflight;
+- replaceable local worker adapter, Codex by default;
+- bounded implementation/verification/repair loop;
+- repository-owned verifier with captured evidence;
+- automatic verified commit and PR delivery;
+- production authorization kept separate.
 
-The repository also publishes an **optional reusable skill catalog** under `skills/`, including both generic workflow skills and Mauro-specific PHP/MySQL/JavaScript, CRUD, database-safety and AI-integration conventions.
+The core remains stack-neutral. `mauro-php` is an optional stronger project profile, not a global assumption.
 
-These domain-specific skills are loaded only when repository evidence and task context make them relevant. They do not change the stack-neutral contract of the MAU ADS core and never override target-repository evidence or project-owned verification.
+Spec Kit, Harbor/eval-engineering, Orca and similar tools are external optional layers, not runtime dependencies or competing sources of truth.

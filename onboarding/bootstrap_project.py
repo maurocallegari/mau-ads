@@ -20,6 +20,7 @@ No valid work context means no durable writes.
 - Read `.ai/project.json`, `PROJECT.md` and `REPO_MAP.md` when present.
 - Inspect relevant source and tests before changing behavior.
 - Preserve repository evidence over remembered session assumptions.
+- Use the canonical GitHub Issue as the work identity.
 
 ## Verification
 
@@ -43,7 +44,30 @@ exit 2
 """
 
 
-def _project_text(data: dict) -> str:
+def resolve_profile(root: Path, requested: str = "auto") -> str:
+    if requested not in {"auto", "generic", "mauro-php"}:
+        raise ValueError(f"unsupported profile: {requested}")
+    if requested != "auto":
+        return requested
+
+    manifest = root / ".ai" / "project.json"
+    if manifest.is_file():
+        try:
+            current = json.loads(manifest.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            current = {}
+        if current.get("profile") in {"generic", "mauro-php"}:
+            return current["profile"]
+
+    # Conservative auto-detection: generic unless this already looks like one
+    # of Mauro's PHP applications. WordPress and unrelated PHP must not be
+    # forced into the Mauro profile merely because PHP exists.
+    if (root / "configure.php").is_file() and any(root.glob("*.php")):
+        return "mauro-php"
+    return "generic"
+
+
+def _project_text(data: dict, profile: str) -> str:
     evidence = data["evidence"]
     return f"""# Project
 
@@ -51,12 +75,21 @@ def _project_text(data: dict) -> str:
 
 Purpose was not safely inferable from deterministic evidence. Workers must inspect repository-owned documentation and relevant code before changing behavior.
 
+## Profile
+
+- MAU ADS profile: `{profile}`
+
 ## Repository evidence
 
 - observed manifests: {', '.join(evidence['manifests']) or 'none'}
 - observed CI: {', '.join(evidence['ci']) or 'none'}
 - observed test evidence: {len(evidence['tests'])} path(s)
 - observed migration/schema evidence: {len(evidence['migrations_or_schema'])} path(s)
+- observed configuration examples: {', '.join(evidence['configuration_examples']) or 'none'}
+
+## Environments
+
+Local development and production are separate authorities. Runtime secrets never belong in Git. Production access is evidence/deployment transport only and is never the development workspace.
 
 ## Verification
 
@@ -73,26 +106,64 @@ def _repo_map_text(data: dict) -> str:
     return "# Repository map\n\n| Path | Observed role |\n|---|---|\n" + ("\n".join(rows) if rows else "| `.` | repository root |") + "\n"
 
 
-def bootstrap(repository: str | Path) -> dict:
+def _manifest(root: Path, profile: str) -> dict:
+    local: dict = {"kind": "development"}
+    if profile == "mauro-php":
+        local.update({
+            "runtime_files": [".env"],
+            "tracked_template": ".env.example",
+        })
+
+    return {
+        "schema_version": 1,
+        "profile": profile,
+        "name": root.name,
+        "ads": {"contract_version": 2},
+        "environments": {
+            "local": local,
+            "production": {
+                "kind": "production",
+                "secrets_in_git": False,
+                "deployment_authorization": "explicit",
+            },
+        },
+        "verification": {"command": "dev/verify-local.sh"},
+        "workflow": {
+            "worker": "codex",
+            "max_fix_attempts": 3,
+        },
+    }
+
+
+def _ensure_gitignore(root: Path, profile: str) -> list[str]:
+    if profile != "mauro-php":
+        return []
+    path = root / ".gitignore"
+    current = path.read_text(encoding="utf-8") if path.is_file() else ""
+    lines = current.splitlines()
+    if ".env" in lines:
+        return []
+    prefix = current
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    path.write_text(prefix + ".env\n", encoding="utf-8")
+    return [".gitignore"]
+
+
+def bootstrap(repository: str | Path, profile: str = "auto") -> dict:
     data = analyze(repository)
     root = Path(data["repository"]["root"])
+    resolved_profile = resolve_profile(root, profile)
     created: list[str] = []
+    updated: list[str] = []
 
     targets = [
         (root / "AGENTS.md", AGENTS_TEMPLATE),
-        (root / "PROJECT.md", _project_text(data)),
+        (root / "PROJECT.md", _project_text(data, resolved_profile)),
         (root / "REPO_MAP.md", _repo_map_text(data)),
         (
             root / ".ai" / "project.json",
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "profile": "generic",
-                    "name": root.name,
-                    "verification": {"command": "dev/verify-local.sh"},
-                },
-                indent=2,
-            ) + "\n",
+            json.dumps(_manifest(root, resolved_profile), indent=2) + "\n",
         ),
         (root / "dev" / "verify-local.sh", VERIFY_TEMPLATE),
     ]
@@ -106,11 +177,15 @@ def bootstrap(repository: str | Path) -> dict:
             path.chmod(path.stat().st_mode | 0o111)
         created.append(path.relative_to(root).as_posix())
 
+    updated.extend(_ensure_gitignore(root, resolved_profile))
+
     return {
         "schema_version": 1,
         "kind": "mau.onboarding_bootstrap",
         "repository": str(root),
+        "profile": resolved_profile,
         "created": created,
+        "updated": updated,
         "preserved_existing": True,
     }
 
@@ -118,9 +193,10 @@ def bootstrap(repository: str | Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Safely bootstrap the MAU ADS project contract")
     parser.add_argument("repository", nargs="?", default=".")
+    parser.add_argument("--profile", choices=("auto", "generic", "mauro-php"), default="auto")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(bootstrap(args.repository), indent=2 if args.pretty else None, sort_keys=True))
+    print(json.dumps(bootstrap(args.repository, args.profile), indent=2 if args.pretty else None, sort_keys=True))
     return 0
 
 
