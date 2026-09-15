@@ -2,7 +2,24 @@
   "schema_version": 1,
   "profile": "generic",
   "name": "example-project",
+  "ads": {
+    "contract_version": 2
+  },
+  "environments": {
+    "local": {
+      "kind": "development"
+    },
+    "production": {
+      "kind": "production",
+      "secrets_in_git": false,
+      "deployment_authorization": "explicit"
+    }
+  },
   "verification": {
     "command": "dev/verify-local.sh"
+  },
+  "workflow": {
+    "worker": "codex",
+    "max_fix_attempts": 3
   }
 }

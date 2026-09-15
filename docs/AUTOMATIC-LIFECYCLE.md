@@ -1,54 +1,42 @@
 # Automatic lifecycle
 
-MAU ADS is not a command interface for the human. It is an invisible operating layer used by a coding agent or orchestrator.
-
-The human interaction stays ordinary:
-
-```text
-"Fix this bug in repository X."
-```
-
-A compatible executor automatically performs:
+MAU ADS is an invisible operating layer. The human states an outcome; the coding worker/orchestrator invokes the lifecycle.
 
 ```text
 REQUEST
-  -> INTAKE GATE
-  -> REPOSITORY ANALYSIS / REFRESH
-  -> AUTOMATIC ONBOARDING when required
+  -> ISSUE IDENTITY
+  -> ISOLATED WORKTREE
+  -> ANALYSIS / ONBOARDING
   -> CONTRACT VALIDATION
-  -> CANONICAL WORK ITEM
-  -> ISOLATED WORKSPACE
+  -> INTAKE PREFLIGHT
   -> WORKER
   -> PROJECT VERIFICATION
-  -> FINAL DIFF REVIEW
+  -> COMPLETION PREFLIGHT
+  -> REPAIR LOOP when required
+  -> VERIFIED COMMIT
   -> PR / REVIEW
-  -> READY_TO_DEPLOY
+  -> READY
 ```
+
+Production is not part of READY and requires separate authorization.
 
 ## Core invariant
 
 ```text
-NO VALID MAU WORK CONTEXT
-  =
-NO DURABLE WRITES
+NO VALID MAU WORK CONTEXT = NO DURABLE WRITES
+NO VERIFIED RESULT = NO READY
 ```
-
-The internal `bin/mau-agent` and runtime modules are machine-facing primitives. They exist so workers can execute the contract consistently; the human should not need to remember their syntax.
 
 ## Standalone mode
 
-`main` is the standalone reference profile.
+`runtime/workflow.py` owns the full cycle. It composes the lower-level primitives instead of relying on a worker to remember a checklist.
 
-When no external orchestrator is present, the intake gate is responsible for:
+The intake gate resolves/creates the Issue, creates the worktree, and bootstraps the project contract inside that worktree when needed. It must not dirty the source working tree as a side effect of onboarding.
 
-- validating or safely bootstrapping the project contract;
-- resolving/creating the canonical GitHub Issue when GitHub CLI access is available;
-- refusing readiness when the work item cannot be established;
-- creating an isolated Git worktree for the writer;
-- returning a machine-readable work context.
+The worker then receives one implementation prompt. After each attempt, MAU independently runs the project verifier, completion preflight and Git diff checks. Failure evidence is fed back into the same task for a bounded repair loop.
 
-The completion gate runs repository-owned verification, checks the final Git state, pushes the isolated branch and creates/reuses a Pull Request when GitHub delivery is available.
+MAU owns the commit only after all gates pass. The completion gate reruns verification on the clean commit and handles GitHub delivery.
 
-## Orchestrated mode
+## External orchestrators
 
-An external orchestrator may own task dispatch, GitHub integration and workspace creation. MAU then validates repository-specific conditions and authorizes writes only after the orchestrator supplies durable work-item identity and isolated workspace evidence.
+An external orchestrator may own UI, queueing, dependency ordering and worker selection. It may also provide Issue/workspace evidence to lower-level MAU primitives. It must not become a second source of truth for project knowledge, work identity or verification.

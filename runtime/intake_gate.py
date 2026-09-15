@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 from onboarding.bootstrap_project import bootstrap
-from onboarding.validate_project import ContractError, validate
+from onboarding.validate_project import ContractError, load_manifest, validate
 from runtime.analyze_repository import analyze
 from runtime.routing import route
 
@@ -58,7 +58,12 @@ def _resolve_or_create_issue(root: Path, request: str, origin: str | None) -> di
             if str(item.get("title", "")).strip().casefold() == title.casefold():
                 return {"status": "READY", "source": "existing", **item, "repository": repo}
 
-    body = "Created automatically by the MAU ADS standalone intake gate.\n\nRequested outcome:\n\n" + request.strip() + "\n"
+    body = (
+        "Created automatically by the MAU ADS standalone intake gate.\n\n"
+        "## Requested outcome\n\n" + request.strip() + "\n\n"
+        "## Acceptance\n\n"
+        "Implementation must pass the repository-owned verifier and MAU completion gates.\n"
+    )
     created = _run(["gh", "issue", "create", "--repo", repo, "--title", title, "--body", body], cwd=root)
     if created.returncode != 0:
         return {"status": "UNAVAILABLE", "reason": created.stderr.strip() or "issue creation failed", "repository": repo}
@@ -101,6 +106,33 @@ def _prepare_worktree(root: Path, issue: dict, request: str) -> dict:
     return {"status": "READY", "branch": branch, "path": str(path), "source": "created"}
 
 
+def _ensure_contract(workspace: Path, bootstrap_missing: bool, profile: str) -> tuple[dict, dict | None]:
+    onboarding_result = None
+    try:
+        return validate(workspace, False), onboarding_result
+    except ContractError:
+        if not bootstrap_missing:
+            return {"contract": "FAIL", "verification": "NOT_RUN"}, onboarding_result
+        onboarding_result = bootstrap(workspace, profile)
+        return validate(workspace, False), onboarding_result
+
+
+def _copy_runtime_files(source: Path, workspace: Path, manifest: dict) -> list[str]:
+    copied: list[str] = []
+    local = (manifest.get("environments") or {}).get("local") or {}
+    for item in local.get("runtime_files") or []:
+        if not isinstance(item, str) or not item or Path(item).is_absolute() or ".." in Path(item).parts:
+            continue
+        src = source / item
+        dst = workspace / item
+        if not src.is_file() or dst.exists():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        copied.append(item)
+    return copied
+
+
 def intake(
     repository: str | Path,
     request: str,
@@ -109,32 +141,39 @@ def intake(
     issue_number: int | None = None,
     workspace: str | None = None,
     prepare_workspace: bool = True,
+    profile: str = "auto",
 ) -> dict:
     initial = analyze(repository)
     root = Path(initial["repository"]["root"])
-    onboarding_result = None
-
-    try:
-        contract = validate(root, False)
-    except ContractError:
-        if not bootstrap_missing:
-            contract = {"contract": "FAIL", "verification": "NOT_RUN"}
-        else:
-            onboarding_result = bootstrap(root)
-            contract = validate(root, False)
-
-    analysis = analyze(root)
+    delegated: list[str] = []
 
     if mode == "standalone":
-        issue = {"status": "READY", "source": "provided", "number": issue_number} if issue_number else _resolve_or_create_issue(root, request, analysis["repository"]["git"]["origin"])
+        issue = (
+            {"status": "READY", "source": "provided", "number": issue_number}
+            if issue_number
+            else _resolve_or_create_issue(root, request, initial["repository"]["git"]["origin"])
+        )
         work = _prepare_worktree(root, issue, request) if prepare_workspace else {"status": "NOT_RUN", "reason": "workspace preparation disabled"}
-        write_authorized = contract.get("contract") == "PASS" and issue.get("status") == "READY" and work.get("status") == "READY"
-        delegated: list[str] = []
+        target = Path(work["path"]) if work.get("status") == "READY" and work.get("path") else root
     else:
         issue = {"status": "READY" if issue_number else "REQUIRED", "source": "orchestrator", "number": issue_number}
         work = {"status": "READY" if workspace else "REQUIRED", "source": "orchestrator", "path": workspace}
-        write_authorized = contract.get("contract") == "PASS" and bool(issue_number) and bool(workspace)
+        target = Path(workspace).expanduser().resolve() if workspace else root
         delegated = ["work_item", "workspace_isolation", "worker_dispatch", "github_delivery"]
+
+    contract, onboarding_result = _ensure_contract(target, bootstrap_missing, profile)
+    runtime_files: list[str] = []
+    if contract.get("contract") == "PASS" and target != root:
+        try:
+            runtime_files = _copy_runtime_files(root, target, load_manifest(target))
+        except ContractError:
+            runtime_files = []
+
+    analysis = analyze(target)
+    if mode == "standalone":
+        write_authorized = contract.get("contract") == "PASS" and issue.get("status") == "READY" and work.get("status") == "READY"
+    else:
+        write_authorized = contract.get("contract") == "PASS" and bool(issue_number) and bool(workspace)
 
     return {
         "schema_version": 1,
@@ -142,11 +181,13 @@ def intake(
         "mode": mode,
         "request": request,
         "repository": {
-            "root": str(root),
+            "source_root": str(root),
+            "workspace_root": str(target),
             "fingerprint": analysis["structure"]["fingerprint"],
-            "contract": contract["contract"],
+            "contract": contract.get("contract", "FAIL"),
         },
         "onboarding": onboarding_result,
+        "runtime_files_copied": runtime_files,
         "work_item": issue,
         "workspace": work,
         "routing": route(request),
@@ -154,6 +195,7 @@ def intake(
         "write_authorized": write_authorized,
         "completion_requires": {
             "project_verification": True,
+            "completion_preflight": True,
             "final_diff_review": True,
             "truthful_verification_state": True,
             "production_authorization_separate": True,
@@ -168,6 +210,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=("standalone", "external-orchestrator"), default="standalone")
     parser.add_argument("--issue", type=int)
     parser.add_argument("--workspace")
+    parser.add_argument("--profile", choices=("auto", "generic", "mauro-php"), default="auto")
     parser.add_argument("--no-bootstrap", action="store_true")
     parser.add_argument("--no-workspace", action="store_true")
     parser.add_argument("--pretty", action="store_true")
@@ -181,6 +224,7 @@ def main() -> int:
         args.issue,
         args.workspace,
         not args.no_workspace,
+        args.profile,
     )
     print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
     return 0 if payload["write_authorized"] else 2

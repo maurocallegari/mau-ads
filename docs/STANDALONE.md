@@ -1,25 +1,21 @@
 # Standalone profile
 
-The `main` branch is the MAU ADS profile for direct coding agents without an external orchestrator.
+The standalone profile is a complete local software-development loop, not a set of advisory markdown instructions.
 
-## Ownership
-
-MAU standalone owns the minimum lifecycle mechanics required to make repository rules real rather than advisory:
-
-| Concern | Standalone owner |
+| Concern | Owner |
 |---|---|
 | repository analysis | MAU |
-| project contract bootstrap/validation | MAU |
-| canonical GitHub Issue | MAU gate, when GitHub access is available |
-| isolated worktree | MAU gate |
+| contract bootstrap/validation | MAU + target repo evidence |
+| canonical GitHub Issue | MAU intake |
+| isolated worktree | MAU intake |
 | implementation | selected coding worker |
 | project verification | target repository |
-| final diff review | worker/reviewer |
-| PR/review | MAU completion gate + GitHub-capable worker |
-| production authorization | human boundary |
+| deterministic gates | MAU |
+| repair retries | MAU workflow |
+| verified commit | MAU workflow |
+| PR delivery | MAU completion gate |
+| production authorization | explicit human boundary |
 
-If GitHub identity, authentication or a clean source baseline is unavailable, the gate returns a blocked/unavailable state instead of silently allowing writes.
+The default worker is local Codex CLI. `MAU_WORKER_COMMAND` or `--worker-command` can replace it without changing project contracts.
 
-## Human UX
-
-The user gives the requested outcome. The worker invokes MAU automatically. Internal MAU commands are not part of the expected user workflow.
+If Issue identity, Git state, verifier evidence or required profile gates are unavailable, the workflow stops with `BLOCKED` instead of silently continuing.

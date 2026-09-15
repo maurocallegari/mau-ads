@@ -10,6 +10,7 @@ from pathlib import Path
 
 from onboarding.validate_project import ContractError, validate
 from runtime.analyze_repository import analyze
+from runtime.preflight import preflight
 
 
 def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -38,6 +39,19 @@ def finish(repository: str | Path, issue_number: int | None = None, base: str = 
             "status": "BLOCKED",
             "verification": verification,
             "reason": "project verification does not permit completion",
+            "verification_stdout": contract.get("verification_stdout", ""),
+            "verification_stderr": contract.get("verification_stderr", ""),
+        }
+
+    final_preflight = preflight(root, phase="completion", base=base)
+    if final_preflight["status"] != "PASS":
+        return {
+            "schema_version": 1,
+            "kind": "mau.completion",
+            "status": "BLOCKED",
+            "verification": verification,
+            "reason": "completion preflight failed",
+            "preflight": final_preflight,
         }
 
     diffcheck = _run(["git", "diff", "--check"], root)

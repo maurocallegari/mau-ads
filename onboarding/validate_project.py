@@ -10,6 +10,7 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 REQUIRED_FILES = ["AGENTS.md", "PROJECT.md", ".ai/project.json"]
 VERIFICATION_STATES = {0: "PASS", 1: "FAIL", 2: "UNAVAILABLE", 3: "NOT_RUN", 4: "NOT_APPLICABLE"}
+SUPPORTED_PROFILES = {"generic", "mauro-php"}
 
 
 class ContractError(RuntimeError):
@@ -28,10 +29,21 @@ def load_manifest(root: Path) -> dict:
         raise ContractError(".ai/project.json must contain a JSON object")
     if data.get("schema_version") != SCHEMA_VERSION:
         raise ContractError(f"schema_version must be {SCHEMA_VERSION}")
-    if data.get("profile") != "generic":
-        raise ContractError("profile must be 'generic'")
+    if data.get("profile") not in SUPPORTED_PROFILES:
+        raise ContractError("profile must be 'generic' or 'mauro-php'")
     if not isinstance(data.get("name"), str) or not data["name"].strip():
         raise ContractError("name must be a non-empty string")
+
+    environments = data.get("environments")
+    if environments is not None and not isinstance(environments, dict):
+        raise ContractError("environments must be an object when present")
+    workflow = data.get("workflow")
+    if workflow is not None:
+        if not isinstance(workflow, dict):
+            raise ContractError("workflow must be an object when present")
+        attempts = workflow.get("max_fix_attempts", 3)
+        if not isinstance(attempts, int) or attempts < 1 or attempts > 10:
+            raise ContractError("workflow.max_fix_attempts must be an integer between 1 and 10")
     return data
 
 
@@ -74,6 +86,7 @@ def validate(repository: str | Path, run_verification: bool = False) -> dict:
         "schema_version": SCHEMA_VERSION,
         "kind": "mau.contract_validation",
         "repository": str(root),
+        "profile": manifest["profile"],
         "contract": "PASS",
         "verification": "NOT_RUN",
         "verification_command": verify.relative_to(root).as_posix(),
@@ -81,9 +94,24 @@ def validate(repository: str | Path, run_verification: bool = False) -> dict:
 
     if run_verification:
         command = ["bash", str(verify)] if verify.suffix == ".sh" else [str(verify)]
-        completed = subprocess.run(command, cwd=root, check=False)
-        result["verification"] = VERIFICATION_STATES.get(completed.returncode, "FAIL")
-        result["verification_exit_code"] = completed.returncode
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=root,
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=900,
+            )
+            result["verification"] = VERIFICATION_STATES.get(completed.returncode, "FAIL")
+            result["verification_exit_code"] = completed.returncode
+            result["verification_stdout"] = completed.stdout[-12000:]
+            result["verification_stderr"] = completed.stderr[-12000:]
+        except subprocess.TimeoutExpired as exc:
+            result["verification"] = "FAIL"
+            result["verification_exit_code"] = 124
+            result["verification_stdout"] = (exc.stdout or "")[-12000:] if isinstance(exc.stdout, str) else ""
+            result["verification_stderr"] = "verification timed out after 900 seconds"
     return result
 
 
